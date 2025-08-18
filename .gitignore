@@ -1,0 +1,11 @@
+claude_docs/*
+CLAUDE.md
+data/*
+outputs/*
+**/output/*
+**/outputs/*
+./src/template_trainer/data
+wandb/*
+*/wandb/*
+temp/*
+**/__pycache__/*

@@ -1,0 +1,15 @@
+# @package _global_
+# Data generation configuration for 1D Burgers equation
+
+problem: "1D_burgers"
+
+tasks:
+  - "cfl"
+  - "k"
+  - "w"
+
+n_sample: 1500
+
+profile_path: "SimulCost-Bench/profiles/burgers_1d"
+gt_dir: "SimulCost-Bench/ground_truth/burgers_1d"
+output_dir: "data/burgers_1d"

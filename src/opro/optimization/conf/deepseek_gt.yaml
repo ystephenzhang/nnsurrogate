@@ -1,0 +1,20 @@
+# Configuration for optimize_simu.py
+optimization:
+  num_points: 100  # number of points in TSP
+  num_steps: 10   # the number of optimization steps
+  max_num_pairs: 10  # the maximum number of input-output pairs in meta-prompt
+  num_decimals: 3    # num of decimals for parameters in meta-prompt
+  num_starting_points: 5  # the number of initial points for optimization
+  num_decode_per_step: 4  # the number of decoded solutions per step
+
+llm:
+  optimizer: "deepseek-chat"  # The name of the optimizer LLM
+
+# Simulation parameters
+problem: "1D_heat_transfer"  # Problem type: 1D_heat_transfer, 2D_heat_transfer, 1D_burgers
+task: "n_space"  # Task parameter to optimize: cfl, n_space, dx, relax, etc.
+profile: "p9"  # Profile ID for the simulation
+evaluation_backend: "ground_truth"  # Evaluation backend: "surrogate" or "ground_truth"
+
+surrogate_config: "/home/ubuntu/dev/src/template_trainer/train_configs/1D_heat_transfer.yaml"
+log_real_value: True

@@ -1,0 +1,16 @@
+# @package _global_
+# Data generation configuration for 2D heat transfer
+
+problem: "2D_heat_transfer"
+
+tasks:
+  - "dx"
+  - "error_threshold"
+  - "relax"
+  - "t_init"
+
+n_sample: 2000
+
+profile_path: "SimulCost-Bench/profiles/heat_2d"
+gt_dir: "SimulCost-Bench/ground_truth/heat_2d"
+output_dir: "data/heat_2d"

@@ -1,0 +1,22 @@
+# Data generation configuration for SimRewardGenerator
+
+# Problem type: "1D_heat_transfer", "2D_heat_transfer", or "1D_burgers"
+problem: "1D_heat_transfer"
+
+# Tasks to generate data for
+tasks:
+  - "cfl"
+  - "n_space"
+
+# Number of samples to generate
+n_sample: 1000
+
+# Paths
+profile_path: "SimulCost-Bench/profiles/heat_1d"
+gt_dir: "SimulCost-Bench/ground_truth/heat_1d"
+output_dir: "data/heat_1d"
+
+# Optional: Hydra output directory override
+hydra:
+  job:
+    chdir: false  # Don't change working directory

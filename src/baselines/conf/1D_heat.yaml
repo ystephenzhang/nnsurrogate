@@ -1,0 +1,5 @@
+problem: 1D_heat_transfer
+profile: p9
+task: n_space
+
+save_dir: /home/ubuntu/dev/src/outputs/bo-results

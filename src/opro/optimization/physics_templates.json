@@ -1,0 +1,17 @@
+{
+  "1D_heat_transfer": {
+    "cfl": "Problem: 1D transient heat conduction in a wall with:\n- Wall thickness: {L} m\n- Left boundary: Convection (h = {h} W/m^2-K, T_inf = {T_int} C)\n- Right boundary: Insulated (zero heat flux)\n- Initial temperature: 25.00 C (uniform)\n- Thermal conductivity: 1.0000 W/m-K\n- Specific heat: 1000.0 J/kg-K\n- Density: 1500.0 kg/m^3\n- Recording interval: 10.0000 s\n\nAvailable functions: \n{\"type\": \"function\", \"function\": {\"name\": \"check_converge_cfl\", \"description\": \"Conduct a 1D heat transfer PDE simulation and evaluate its cfl convergence. This experiment will conduct both PDE solving and convergence testing in one function. It will return {\\\"cfl_l2_error\\\": float, \\\"is_converged\\\": bool, \\\"accumulated_cost\\\": int}.\", \"parameters\": {\"type\": \"object\", \"properties\": {\"n_space\": {\"type\": \"integer\", \"description\": \"Number of spatial segments\"}, \"cfl\": {\"type\": \"float\", \"description\": \"Number of cfl\"}}, \"required\": [\"n_space\", \"cfl\"]}}}",
+    "n_space": "Problem: 1D transient heat conduction in a wall with:\n- Wall thickness: 0.150000 m\n- Left boundary: Convection (h = 1000.000 W/m^2-K, T_inf = 12.00 C)\n- Right boundary: Insulated (zero heat flux)\n- Initial temperature: 25.00 C (uniform)\n- Thermal conductivity: 1.0000 W/m-K\n- Specific heat: 1000.0 J/kg-K\n- Density: 1500.0 kg/m^3\n- Recording interval: 10.0000 s"
+  },
+  "2D_heat_transfer": {
+    "dx": "Physical Parameters:\n- T_top: 1.0\n- T_bottom: 0\n- T_left: 0\n- T_right: 0",
+    "relax": "Physical Parameters:\n- T_top: 1.0\n- T_bottom: 0\n- T_left: 0\n- T_right: 0",
+    "error_threshold": "Physical Parameters:\n- T_top: 1.0\n- T_bottom: 0\n- T_left: 0\n- T_right: 0",
+    "t_init": "Physical Parameters:\n- T_top: 1.0\n- T_bottom: 0\n- T_left: 0\n- T_right: 0"
+  },
+  "1D_burgers": {
+    "cfl": "Physical Parameters:\n- Domain length: 2.0\n- Case: sin\n\nConvergence Check:\n- The current CFL value will be halved (veri_cfl = cfl / 2), and the simulation is rerun with veri_cfl.\n- Errors between the two simulations are computed to assess convergence.\n- Convergence is confirmed if the following validation criteria are satisfied.",
+    "k": "Physical Parameters:\n- Domain length: 2.0\n- Case: sin\n\nConvergence Check:\n- The current CFL value will be halved (veri_cfl = cfl / 2), and the simulation is rerun with veri_cfl.\n- Errors between the two simulations are computed to assess convergence.\n- Convergence is confirmed if the following validation criteria are satisfied.",
+    "w": "Physical Parameters:\n- Domain length: 2.0\n- Case: sin\n\nConvergence Check:\n- The current CFL value will be halved (veri_cfl = cfl / 2), and the simulation is rerun with veri_cfl.\n- Errors between the two simulations are computed to assess convergence.\n- Convergence is confirmed if the following validation criteria are satisfied."
+  }
+}
