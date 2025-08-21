@@ -16,6 +16,7 @@
 import time
 from openai import OpenAI
 import pdb
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def call_local_server_func(
   inputs, model_path, max_tokens=50, temperature=0.8
@@ -67,35 +68,35 @@ def call_openai_server_single_prompt(
       print(f"Timeout error occurred. Retrying in {retry_time} seconds...")
       time.sleep(retry_time)
       return call_openai_server_single_prompt(
-          prompt, model=model, max_decode_steps=max_decode_steps, temperature=temperature
+          messages, model=model, max_decode_steps=max_decode_steps, temperature=temperature
       )
     elif "rate_limit_exceeded" in str(e).lower() or "rate limit" in str(e).lower():
       retry_time = 30
       print(f"Rate limit exceeded. Retrying in {retry_time} seconds...")
       time.sleep(retry_time)
       return call_openai_server_single_prompt(
-          prompt, model=model, max_decode_steps=max_decode_steps, temperature=temperature
+          messages, model=model, max_decode_steps=max_decode_steps, temperature=temperature
       )
     elif "api" in str(e).lower() and "error" in str(e).lower():
       retry_time = 30
       print(f"API error occurred: {e}. Retrying in {retry_time} seconds...")
       time.sleep(retry_time)
       return call_openai_server_single_prompt(
-          prompt, model=model, max_decode_steps=max_decode_steps, temperature=temperature
+          messages, model=model, max_decode_steps=max_decode_steps, temperature=temperature
       )
     elif "connection" in str(e).lower():
       retry_time = 30
       print(f"Connection error occurred: {e}. Retrying in {retry_time} seconds...")
       time.sleep(retry_time)
       return call_openai_server_single_prompt(
-          prompt, model=model, max_decode_steps=max_decode_steps, temperature=temperature
+          messages, model=model, max_decode_steps=max_decode_steps, temperature=temperature
       )
     elif "service unavailable" in str(e).lower():
       retry_time = 30
       print(f"Service unavailable: {e}. Retrying in {retry_time} seconds...")
       time.sleep(retry_time)
       return call_openai_server_single_prompt(
-          prompt, model=model, max_decode_steps=max_decode_steps, temperature=temperature
+          messages, model=model, max_decode_steps=max_decode_steps, temperature=temperature
       )
     else:
       raise e
@@ -107,7 +108,7 @@ def call_openai_server_single_prompt(
     )
     time.sleep(retry_time)
     return call_openai_server_single_prompt(
-        prompt, max_decode_steps=max_decode_steps, temperature=temperature
+        messages, max_decode_steps=max_decode_steps, temperature=temperature
     )
 
 
@@ -126,6 +127,47 @@ def call_openai_server_func(
         temperature=temperature,
     )
     outputs.append(output)
+  return outputs
+
+
+def call_openai_server_func_parallel(
+    messages_list, model="gpt-3.5-turbo", max_decode_steps=20, temperature=0.8, max_workers=10
+):
+  """The function to call OpenAI server with a list of message lists in parallel."""
+  if not isinstance(messages_list, list):
+    raise ValueError("messages_list must be a list of message lists")
+  
+  if not messages_list:
+    return []
+  
+  # If single message list is passed, wrap it in a list
+  if isinstance(messages_list[0], dict):
+    messages_list = [messages_list]
+  
+  outputs = [None] * len(messages_list)
+  
+  with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # Submit all tasks
+    future_to_index = {
+      executor.submit(
+        call_openai_server_single_prompt,
+        messages,
+        model=model,
+        max_decode_steps=max_decode_steps,
+        temperature=temperature
+      ): i for i, messages in enumerate(messages_list)
+    }
+    
+    # Collect results as they complete
+    for future in as_completed(future_to_index):
+      index = future_to_index[future]
+      try:
+        result = future.result()
+        outputs[index] = result
+      except Exception as e:
+        print(f"Error processing messages at index {index}: {e}")
+        outputs[index] = None
+  
   return outputs
 
 

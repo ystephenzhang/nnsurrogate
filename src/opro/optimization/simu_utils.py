@@ -262,7 +262,8 @@ def prepare_model_input(params, problem, profile):
     Returns:
         tuple: (static_tensor, tunable_tensor) ready for model input
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     
     dir_name = dir_mapping[problem]
     # Get static parameters from the profile configuration
@@ -298,7 +299,7 @@ def prepare_model_input(params, problem, profile):
     
     return static_tensor, tunable_tensor
 
-def evaluate(params, verifier, profile, backend: Literal["surrogate", "ground_truth"]="surrogate", surrogate_config=None):
+def evaluate(params, verifier, profile, backend: Literal["surrogate", "ground_truth"]="surrogate", surrogate_config=None, soft_success=True):
     """
     Evaluate simulation parameters using the verifier.
     
@@ -313,18 +314,17 @@ def evaluate(params, verifier, profile, backend: Literal["surrogate", "ground_tr
     #try:
     if backend == "ground_truth":
         #pdb.set_trace()
-        success, cost, score = verifier.metric(params, profile)
+        success, cost, score = verifier.metric(params, profile, soft_success=soft_success)
             
     elif backend == "surrogate":
         # Use surrogate model for evaluation
         
         # Load the surrogate model
-        model = load_surrogate_model(verifier.problem, verifier.task, verifier.tolerance, profile, surrogate_config)
+        model = load_surrogate_model(verifier.problem, verifier.tolerance, surrogate_config)
         
         # Prepare input tensors
         static_tensor, tunable_tensor = prepare_model_input(params, verifier.problem, profile)
         
-        #pdb.set_trace()
         # Get model prediction
         with torch.no_grad():
             prediction = model((static_tensor, tunable_tensor))
@@ -336,6 +336,8 @@ def evaluate(params, verifier, profile, backend: Literal["surrogate", "ground_tr
             
             # Ensure reasonable bounds
             success_pred = max(0.0, min(1.0, success_pred))  # Clamp between 0 and 1
+            if not soft_success:
+                success_pred = 1.0 if success_pred >= 1 else 0
             if cost_pred <= 0:
                 score = 0
             else:
@@ -349,8 +351,8 @@ def evaluate(params, verifier, profile, backend: Literal["surrogate", "ground_tr
     #except Exception as e:
     #    print(f"Evaluation error: {e}")
     #    return 0.0
-
-def sample_sols(problem, task, verifier, profile, num_samples=5, profile_root="/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs", sampler="random"):
+import copy
+def sample_sols(problem, task, verifier, profile, num_samples=5, gt_sol=None, sampler="random"):
     """
     Generate initial solution samples for optimization.
     
@@ -414,7 +416,9 @@ def sample_sols(problem, task, verifier, profile, num_samples=5, profile_root="/
             else:  # float
                 value = round(value, 4)
             
-            params = {task: value}
+            params = copy.deepcopy(gt_sol)
+            params[task] = value
+            '''params = {task: value}
             
             # Add other required parameters with default values
             if problem == "1D_heat_transfer":
@@ -429,7 +433,7 @@ def sample_sols(problem, task, verifier, profile, num_samples=5, profile_root="/
             elif problem == "1D_burgers":
                 for param in ["cfl", "k", "w"]:
                     if param != task and param in INFO:
-                        params[param] = INFO[param].get("initial", (INFO[param]["range"][0] + INFO[param]["range"][1]) / 2)
+                        params[param] = INFO[param].get("initial", (INFO[param]["range"][0] + INFO[param]["range"][1]) / 2)'''
             
             score = evaluate(params, verifier, profile, backend="ground_truth")
             solutions.append((params, score))

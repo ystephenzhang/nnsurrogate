@@ -8,7 +8,7 @@ sys.path.append("/home/ubuntu/dev/src")
 from general_utils import Verifier
 
 def heat_1d_optimize(profile, task, cfl, n_space):
-    ver = Verifier("1D_heat_transfer", task)
+    ver = Verifier("1D_heat_transfer", task, tolerance="high")
     _, _, score = ver.metric({
         "cfl": cfl,
         "n_space": int(n_space)
@@ -45,7 +45,7 @@ def main(cfg):
                                             heat_1d_optimize,
                                             profile=profile, 
                                             task=task,
-                                            cfl=1.0)
+                                            cfl=0.25)
     else:
         raise NotImplementedError
     
@@ -55,7 +55,7 @@ def main(cfg):
         random_state=1,
     )
 
-    optimizer.maximize(init_points=5, n_iter=10)
+    optimizer.maximize(init_points=cfg.init_points, n_iter=cfg.n_iter)
     
     with open(save_path, 'w') as f:
         for i, res in enumerate(optimizer.res):

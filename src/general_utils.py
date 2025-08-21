@@ -1,13 +1,14 @@
 import sys, json, yaml, os
 import numpy as np
-sys.path.append("/home/ubuntu/codebase/SimulCost-Bench")
+sys.path.append("/home/ubuntu/dev/SimulCost-Bench")
 import costsci_tools.wrappers as wrappers
 import pdb
 
 NAME_TO_FOLDER = {
     "1D_heat_transfer":"heat_1d",
     "2D_heat_transfer":"heat_steady_2d",
-    "1D_burgers":"burgers_1d"
+    "1D_burgers":"burgers_1d",
+    "euler_1d": "euler_1d"
 }
 
 _PROBLEM_TO_TOOL_NAME = {
@@ -110,6 +111,8 @@ def check_cost(problem, profile, params):
         cost = runner(profile, params['cfl'], int(params['n_space']))
     elif problem == "2D_heat_transfer":
         cost, steps = runner(profile, params["dx"], params["relax"], params["error_threshold"], params["t_init"]) 
+    elif problem == "euler_1d":
+        cost = runner(profile, params["cfl"], params["beta"], params["k"], params["n_space"])
 
     return cost
 
@@ -118,7 +121,8 @@ def check_gt(
     profile,
     gt,
     x,
-    tolerance=0.05
+    tolerance=0.05,
+    whether_soft_success=True
 ):
     compare_func = getattr(wrappers, f"compare_res_{NAME_TO_FOLDER[problem]}")
     if problem == "1D_heat_transfer":
@@ -131,7 +135,14 @@ def check_gt(
         success, error = compare_func(profile, x["cfl"], x["k"], x["w"],
                                   profile, gt["cfl"], gt["k"], gt["w"],
                                   tolerance[0], tolerance[1])
-    return soft_success(error, tolerance)
+    elif problem == "euler_1d":
+        success, success1, success2, error = compare_func(profile, x["cfl"], x["beta"], x["k"],
+                                      profile, gt["cfl"], gt["beta"], gt["k"],
+                                      tolerance, x["n_space"], gt["n_space"])
+    if whether_soft_success:
+        return soft_success(error, tolerance)
+    else:
+        return error < tolerance
 
 def extract_yaml_parameter(yaml_path, parameter_name, default_value=None):
     """
@@ -194,8 +205,9 @@ def extract_static(profile_path):
     
     # Problem-specific static parameters
     heat_1d_static = ['L', 'k', 'h', 'rho', 'cp', 'T_inf', 'T_init']
-    heat_2d_static = ['T_top', 'T_bottom', 'T_left', 'T_right']  
-    burgers_1d_static = ['L', 'case']
+    #heat_2d_static = ['T_top', 'T_bottom', 'T_left', 'T_right']  
+    #burgers_1d_static = ['L', 'case']
+    euler_1d_static = ['L', 'gamma', 'case']
     
     # Extract all parameters that aren't tunable
     all_static_keys = set()
@@ -203,10 +215,8 @@ def extract_static(profile_path):
     # Add problem-specific static parameters based on what's in the config
     if any(key in config for key in heat_1d_static):
         all_static_keys.update(heat_1d_static)
-    if any(key in config for key in heat_2d_static):
-        all_static_keys.update(heat_2d_static)
-    if any(key in config for key in burgers_1d_static):
-        all_static_keys.update(burgers_1d_static)
+    if any(key in config for key in euler_1d_static):
+        all_static_keys.update(euler_1d_static)
     
     # Extract static parameters that exist in the config
     for key in all_static_keys:
@@ -261,7 +271,7 @@ def get_tolerance(problem, level):
     returns a float or dict depending on problem type
     '''
     tolerance_map = {
-        'heat_1d': {
+        '1D_heat_transfer': {
             'low': 0.01,
             'medium': 0.001,
             'high': 0.0001
@@ -312,12 +322,12 @@ class Verifier:
                  task,
                  tolerance,
                  dummy_root="/home/ubuntu/dev/SimulCost-Bench/data",
-                 profile_root="/home/ubuntu/codebase/SimulCost-Bench/costsci_tools/run_configs"):
+                 profile_root="/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs"):
         self.problem = problem
         self.task = task
         self.tolerance = tolerance
         
-        dummy_path = f"{dummy_root}/{problem}/{task}/{tolerance}/zero_shot_question.json"
+        dummy_path = f"{dummy_root}/{NAME_TO_FOLDER[problem]}/{task}/{tolerance}/zero_shot_questions.json"
         #dummy_path = f"{dummy_root}/{task}/zero_shot_question.json"
         with open(dummy_path, 'r') as f:
             data = json.load(f)
@@ -333,7 +343,7 @@ class Verifier:
                 return y
         raise ValueError("Verifier initialization error: no dummy best sol found.")
     
-    def metric(self, param, profile, tolerance=None):
+    def metric(self, param, profile, tolerance=None, soft_success=True):
         if not tolerance:
             if self.problem in ["1D_burgers"]:
                 tolerance = [
@@ -349,7 +359,12 @@ class Verifier:
                                             "tolerance",
                                             1e-4)
         #success = check_gt(self.problem, profile, self.best_params[profile], param, float(tolerance), profile_root=self.profile_root)
-        success = check_gt(self.problem, profile, self.best_params[profile], param, get_tolerance(self.problem, self.tolerance))
+        success = check_gt(self.problem,
+                           profile,
+                           self.best_params[profile],
+                           param,
+                           get_tolerance(self.problem, self.tolerance),
+                           whether_soft_success=soft_success)
         cost = check_cost(self.problem, profile, param)
         score = success * (self.best_costs[profile] / (1e-3 + cost))
         return success, cost, score
