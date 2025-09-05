@@ -9,3 +9,4 @@ wandb/*
 */wandb/*
 temp/*
 **/__pycache__/*
+src/_archive/*

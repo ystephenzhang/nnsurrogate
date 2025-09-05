@@ -1,0 +1,48 @@
+model_class: SimRewardModel
+dataset_class: SimRewardDataPipe
+trainer_class: SimRewardTrainer
+
+dump_dir: /home/ubuntu/dev/src/template_trainer/output
+project: Surrogate-1D_heat_transfer
+problem: 1D_heat_transfer
+
+restore_dir: /home/ubuntu/dev/src/template_trainer/output/Surrogate-1D_heat_transfer/20250815-153227
+restore_step: 4000
+
+
+base_seed: 42
+batch: 16
+epochs: 40
+steps_per_epoch: 200
+board: True
+plot: True
+
+model:
+  n_static: 7
+  n_tunable: 2
+  input_dim: 9
+  n_hidden: 128
+  target_dim: 2
+  hidden_layers: 5
+  activation_mod: ReLU
+  layer_norm: False
+  res_connection: False
+  recover_pred_unit: True
+
+dataset_workers: 4
+dataset:
+  dataset_root: /home/ubuntu/dev/src/template_trainer/data
+
+opt:
+  peak_lr: 1e-3
+  weight_decay: 1e-4
+  warmup_steps: 100
+  decay_steps: 1000
+  gnorm_clip: 1.0
+  accumulation_steps: 100
+time_warm: 500
+time_freq: 1000
+
+loss_freq: 200
+plot_freq: 1000
+save_freq: 2000

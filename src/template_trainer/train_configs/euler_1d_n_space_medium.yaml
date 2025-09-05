@@ -1,0 +1,53 @@
+model_class: SimRewardModel
+dataset_class: SimRewardDataPipe
+trainer_class: SimRewardTrainer
+
+dump_dir: /home/ubuntu/dev/src/template_trainer/output/
+project: euler_1d_n_space_med
+problem: euler_1d
+
+restore_dir: /home/ubuntu/dev/data/surrogates/euler_1d_n_space/
+direct_restore_dir: /home/ubuntu/dev/src/template_trainer/output/euler_1d_n_space_med/20250903-081449
+#direct_restore_dir: /home/ubuntu/dev/data/surrogates/euler_1d_n_space/medium
+
+base_seed: 42
+batch: 16
+epochs: 60
+steps_per_epoch: 200
+board: True
+plot: True
+
+model:
+  n_static: 4
+  n_tunable: 4
+  input_dim: 8
+  n_hidden: 128
+  #n_hidden: 256
+  target_dim: 2
+  #hidden_layers: 4
+  hidden_layers: 6
+  activation_mod: ReLU
+  layer_norm: False
+  res_connection: False
+  recover_pred_unit: True
+
+  preprocessed_output: False
+
+dataset_workers: 4
+dataset:
+  dataset_root: /home/ubuntu/dev/data/numerical/euler_1d_n_space/medium
+    
+
+opt:
+  peak_lr: 1e-3
+  weight_decay: 1e-4
+  warmup_steps: 100
+  decay_steps: 1000
+  gnorm_clip: 1.0
+  accumulation_steps: 100
+time_warm: 500
+time_freq: 1000
+
+loss_freq: 200
+plot_freq: 1000
+save_freq: 2000

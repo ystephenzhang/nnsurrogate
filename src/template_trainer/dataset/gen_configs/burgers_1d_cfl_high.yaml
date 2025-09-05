@@ -1,0 +1,18 @@
+output_dir: /home/ubuntu/dev/data/numerical/burgers_1d_cfl
+profile_path: /home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs/burgers_1d
+
+n_sample: 30
+tasks:
+  - cfl
+profiles: ['p1', 'p2', 'p3']
+
+problem: burgers_1d
+dir: burgers_1d
+
+precision_level: high
+add_precision: False
+
+sampling_method: 
+ - random
+ - linear
+append_mode: True

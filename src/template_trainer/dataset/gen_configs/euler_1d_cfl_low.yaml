@@ -1,0 +1,21 @@
+output_dir: /home/ubuntu/dev/data/numerical/euler_1d_cfl
+profile_path: /home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs/euler_1d
+
+n_sample: 40
+tasks:
+  - cfl
+profiles: ['p3']
+
+problem: euler_1d
+dir: euler_1d
+
+precision_level: low
+add_precision: False
+
+sampling_method: 
+ - random
+ - linear
+append_mode: True
+
+#from_existing: l/home/ubuntu/dev/data/numerical/euler_1d_cfl/high/
+from_existing: null

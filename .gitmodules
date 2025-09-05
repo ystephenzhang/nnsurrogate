@@ -1,6 +1,3 @@
 [submodule "SimulCost-Bench"]
 	path = SimulCost-Bench
 	url = https://github.com/ystephenzhang/SimulCost-Bench.git
-[submodule "src/template_trainer"]
-	path = src/template_trainer
-	url = https://github.com/Eydcao/template_trainer.git

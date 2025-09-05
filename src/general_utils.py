@@ -3,11 +3,13 @@ import numpy as np
 sys.path.append("/home/ubuntu/dev/SimulCost-Bench")
 import costsci_tools.wrappers as wrappers
 import pdb
+import torch
 
 NAME_TO_FOLDER = {
     "1D_heat_transfer":"heat_1d",
     "2D_heat_transfer":"heat_steady_2d",
     "1D_burgers":"burgers_1d",
+    "burgers_1d":"burgers_1d",
     "euler_1d": "euler_1d"
 }
 
@@ -21,6 +23,12 @@ _PROBLEM_TO_TOOL_NAME = {
     },
     "1D_burgers":{
         
+    },
+    "euler_1d":{
+        "cfl":"euler_1d_check_converge_cfl",
+        "beta":"euler_1d_check_converge_beta",
+        "k":"euler_1d_check_converge_k",
+        "n_space":"euler_1d_check_converge_n_space"
     }
 }
 
@@ -47,7 +55,12 @@ INFO = {
     "n_space":{
         "description":"n_space, the number of spatial segments to solve a given PDE problem.",
         "hints":"Your goal is to select a value that is likely to converge, while also keeping the cost from becoming too high.\nPlease strike a balance between being too conservative and too aggressive:\n- If n_space is too small, the process may fail to converge.\n- If it's too large, the cost may increase dramatically.", 
-        "range": [64, 1000],
+        "range": 
+            {
+                "euler_1d":[64, 512],
+                "1D_heat_transfer":[64, 256],
+                "burgers_1d": [64, 1024]
+            },
         "initial": 100,
         "type": "int",
         "search": "grid",
@@ -111,6 +124,9 @@ def check_cost(problem, profile, params):
         cost = runner(profile, params['cfl'], int(params['n_space']))
     elif problem == "2D_heat_transfer":
         cost, steps = runner(profile, params["dx"], params["relax"], params["error_threshold"], params["t_init"]) 
+    elif problem == "burgers_1d":
+        # Use beta parameter but pass as w to the wrapper function
+        cost = runner(profile, params["cfl"], params["k"], params["beta"], params["n_space"])
     elif problem == "euler_1d":
         cost = runner(profile, params["cfl"], params["beta"], params["k"], params["n_space"])
 
@@ -131,18 +147,20 @@ def check_gt(
     elif problem == "2D_heat_transfer":
         success, error = compare_func(profile, x["dx"], x["relax"], x["error_threshold"], x["t_init"],
                                   profile, gt["dx"], gt["relax"], gt["error_threshold"], gt["t_init"], tolerance)
-    elif problem == "1D_burgers":
-        success, error = compare_func(profile, x["cfl"], x["k"], x["w"],
-                                  profile, gt["cfl"], gt["k"], gt["w"],
-                                  tolerance[0], tolerance[1])
+    elif problem == "burgers_1d":
+        # Use beta parameter but pass as w to the wrapper function
+        success, _, _, error = compare_func(profile, x["cfl"], x["k"], x["beta"],
+                                  profile, gt["cfl"], gt["k"], gt["beta"],
+                                  tolerance,
+                                  x["n_space"], gt["n_space"])
     elif problem == "euler_1d":
         success, success1, success2, error = compare_func(profile, x["cfl"], x["beta"], x["k"],
                                       profile, gt["cfl"], gt["beta"], gt["k"],
                                       tolerance, x["n_space"], gt["n_space"])
     if whether_soft_success:
-        return soft_success(error, tolerance)
+        return soft_success(error, tolerance), error
     else:
-        return error < tolerance
+        return error < tolerance, error
 
 def extract_yaml_parameter(yaml_path, parameter_name, default_value=None):
     """
@@ -206,17 +224,24 @@ def extract_static(profile_path):
     # Problem-specific static parameters
     heat_1d_static = ['L', 'k', 'h', 'rho', 'cp', 'T_inf', 'T_init']
     #heat_2d_static = ['T_top', 'T_bottom', 'T_left', 'T_right']  
-    #burgers_1d_static = ['L', 'case']
-    euler_1d_static = ['L', 'gamma', 'case']
+    burgers_1d_static = ['case']  # Only case for one-hot encoding
+    euler_1d_static = ['case']
     
     # Extract all parameters that aren't tunable
     all_static_keys = set()
     
     # Add problem-specific static parameters based on what's in the config
-    if any(key in config for key in heat_1d_static):
+    # Use more specific detection to avoid conflicts
+    if "heat_1d" in profile_path:
+        # Heat 1D specific - has unique thermal parameters
         all_static_keys.update(heat_1d_static)
-    if any(key in config for key in euler_1d_static):
+    elif "euler_1d" in profile_path:
+        # Euler 1D specific - has gamma parameter
         all_static_keys.update(euler_1d_static)
+    elif "burgers_1d" in profile_path:
+        # Burgers 1D specific - has w parameter (limiter parameter)
+        all_static_keys.update(burgers_1d_static)
+    
     
     # Extract static parameters that exist in the config
     for key in all_static_keys:
@@ -277,9 +302,9 @@ def get_tolerance(problem, level):
             'high': 0.0001
         },
         'burgers_1d': {
-            'low': {'tolerance_rmse': 0.01, 'tolerance_linf': 0.05},
-            'medium': {'tolerance_rmse': 0.005, 'tolerance_linf': 0.025},
-            'high': {'tolerance_rmse': 0.001, 'tolerance_linf': 0.01}
+            'low': 0.08,
+            'medium': 0.04,
+            'high': 0.01,
         },
         'euler_1d': {
             'low': 0.08,
@@ -322,18 +347,23 @@ class Verifier:
                  task,
                  tolerance,
                  dummy_root="/home/ubuntu/dev/SimulCost-Bench/data",
-                 profile_root="/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs"):
+                 profile_root="/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs",
+                 iterative=False):
         self.problem = problem
         self.task = task
         self.tolerance = tolerance
+        self.iterative = iterative
         
-        dummy_path = f"{dummy_root}/{NAME_TO_FOLDER[problem]}/{task}/{tolerance}/zero_shot_questions.json"
+        if not iterative:
+            dummy_path = f"{dummy_root}/{NAME_TO_FOLDER[problem]}/{task}/{tolerance}/zero_shot_questions.json"
+        else:
+            dummy_path = f"{dummy_root}/{NAME_TO_FOLDER[problem]}/{task}/{tolerance}/iterative_questions.json"
         #dummy_path = f"{dummy_root}/{task}/zero_shot_question.json"
         with open(dummy_path, 'r') as f:
             data = json.load(f)
         #self.best_params = {x["profile"]: self.get_best_params(x) for x in data}
-        self.best_params = {x["profile"]: x["best_params"] for x in data}
-        self.best_costs = {x["profile"]: x["dummy_cost"] for x in data}
+        self.best_params = {str(x["QID"]): x["best_params"] for x in data}
+        self.best_costs = {str(x["QID"]): x["dummy_cost"] for x in data}
         
         self.profile_root = profile_root
         
@@ -343,29 +373,131 @@ class Verifier:
                 return y
         raise ValueError("Verifier initialization error: no dummy best sol found.")
     
-    def metric(self, param, profile, tolerance=None, soft_success=True):
-        if not tolerance:
-            if self.problem in ["1D_burgers"]:
-                tolerance = [
-                    extract_yaml_parameter(f"{self.profile_root}/{NAME_TO_FOLDER[self.problem]}/{profile}.yaml",
-                                            "tolerance1",
-                                            1e-2),
-                    extract_yaml_parameter(f"{self.profile_root}/{NAME_TO_FOLDER[self.problem]}/{profile}.yaml",
-                                            "tolerance2",
-                                            1e-3),
-                ]
-            else:
-                tolerance = extract_yaml_parameter(f"{self.profile_root}/{NAME_TO_FOLDER[self.problem]}/{profile}.yaml",
-                                            "tolerance",
-                                            1e-4)
-        #success = check_gt(self.problem, profile, self.best_params[profile], param, float(tolerance), profile_root=self.profile_root)
-        success = check_gt(self.problem,
+    def metric(self, param, profile, qid, soft_success=True, prev_cost=0):
+        success, error = check_gt(self.problem,
                            profile,
-                           self.best_params[profile],
+                           self.best_params[qid],
                            param,
                            get_tolerance(self.problem, self.tolerance),
                            whether_soft_success=soft_success)
         cost = check_cost(self.problem, profile, param)
-        score = success * (self.best_costs[profile] / (1e-3 + cost))
+        if self.iterative:
+            cost += prev_cost
+        score = success * (self.best_costs[qid] / (1e-3 + cost))
+        #efficiency = self.best_costs[profile] / (1e-3 + cost)
         return success, cost, score
+        
+    def raw_metric(self,
+                   param,
+                   profile,
+                   qid,
+                   prev_cost=0
+                   ):
+        success, error = check_gt(self.problem,
+                           profile,
+                           self.best_params[qid],
+                           param,
+                           get_tolerance(self.problem, self.tolerance),
+                           whether_soft_success=True)
+        cost = check_cost(self.problem, profile, param)
+        if self.iterative:
+            cost += prev_cost
+        return error, success, cost, self.best_costs[qid] / (1e-3 + cost)
+
+# Mapper functions for converting parameters to tensors
+def heat_1d_static_mapper(profile_path, level):
+    """Map static parameters for heat_1d to tensor format"""
+    import torch
+    static_params = extract_static(profile_path)
+    # Add level encoding: low=0, medium=1, high=2
+    level_map = {'low': 0, 'medium': 1, 'high': 2}
+    return torch.tensor([
+        static_params.get('L', 1.0),
+        static_params.get('k', 1.0), 
+        static_params.get('h', 1.0),
+        static_params.get('rho', 1.0),
+        static_params.get('cp', 1.0),
+        static_params.get('T_inf', 300.0),
+        static_params.get('T_init', 350.0),
+        level_map.get(level, 0)
+    ], dtype=torch.float32)
+
+def heat_1d_tunable_mapper(params):
+    """Map tunable parameters for heat_1d to tensor format"""
+    return np.array([
+        params.get('cfl', 1.0),
+        params.get('n_space', 100)
+    ])
+
+def burgers_1d_static_mapper(profile_path, level):
+    """Map static parameters for burgers_1d to tensor format"""
+    static_params = extract_static(profile_path)
+    case = static_params.get('case')
+    oh_mapping = {
+        "sin":0,
+        "rarefaction":1,
+        "sod":2,
+        "double_shock":3,
+        "blast":4
+    }
+    # One-hot encoding for case parameter =
+    case_onehot = torch.zeros(5)
+    case_onehot[oh_mapping[case]] = 1
+    
+    tolerance = torch.tensor(get_tolerance("burgers_1d", level))
+    return torch.concatenate([case_onehot, torch.tensor([tolerance])], dim=-1)
+
+def burgers_1d_tunable_mapper(params):
+    """Map tunable parameters for burgers_1d to tensor format"""
+    return torch.tensor([
+        params.get('cfl', 0.5),
+        params.get('n_space', 100),
+        params.get('beta', 1.0),
+        params.get('k', 1.0),  # Using beta instead of w
+    ])
+
+def euler_1d_static_mapper(profile_path):
+    """Map static parameters for euler_1d to tensor format"""
+    static_params = extract_static(profile_path)
+    case = static_params.get('case', 1)
+    # One-hot encoding for case parameter (assuming cases 1-4)
+    case_onehot = np.zeros(4)
+    if 1 <= case <= 4:
+        case_onehot[case-1] = 1
+    return np.concatenate([
+        np.array([static_params.get('L', 1.0), static_params.get('gamma', 1.4)]),
+        case_onehot
+    ])
+
+def euler_1d_tunable_mapper(params):
+    """Map tunable parameters for euler_1d to tensor format"""
+    return np.array([
+        params.get('cfl', 0.5),
+        params.get('beta', 1.0),
+        params.get('k', 1.0),
+        params.get('n_space', 100)
+    ])
+
+def heat_1d_preprocessor(tunable_tensor, result_tensor, preproc_success=False, preproc_cost=False):
+    """Preprocess result tensor for heat_1d"""
+    processed = result_tensor.clone()
+    if preproc_cost:
+        processed[1] = torch.log1p(processed[1])  # log(1 + cost)
+    return processed
+
+def burgers_1d_preprocessor(tunable_tensor, result_tensor, preproc_success=False, preproc_cost=False):
+    """Preprocess result tensor for burgers_1d"""
+    processed = result_tensor.clone()
+    if preproc_cost:
+        n_space = tunable_tensor[1]
+        cfl = tunable_tensor[0]
+        processed[1] = result_tensor[1] * cfl / (n_space * n_space)
+    return processed
+
+def euler_1d_preprocessor(tunable_tensor, result_tensor, preproc_success=False, preproc_cost=False):
+    """Preprocess result tensor for euler_1d"""
+    processed = result_tensor.clone()
+    if preproc_cost:
+        processed[1] = torch.log1p(processed[1])  # log(1 + cost)
+    return processed
         
