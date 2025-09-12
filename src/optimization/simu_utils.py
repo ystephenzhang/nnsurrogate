@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pdb
 
 sys.path.append('/home/ubuntu/dev/src')
-from general_utils import INFO, extract_static, soft_success
+from general_utils import INFO, extract_static, soft_success, reverse_preproc, get_tolerance
 
 # Load task descriptions from the extracted JSON file
 #with open('/home/ubuntu/dev/src/opro/optimization/task_descriptions.json', 'r') as f:
@@ -35,7 +35,9 @@ dir_mapping = {
     "1D_heat_transfer": "heat_1d",
     "2D_heat_transfer": "heat_steady_2d", 
     "1D_burgers": "burgers_1d",
-    "euler_1d": "euler_1d"
+    "euler_1d": "euler_1d",
+    "ns_channel_2d": "ns_channel_2d",
+    "ns_transient_2d": "ns_transient_2d"
 }
 def get_description(problem, task, profile):
     messages_path = f"/home/ubuntu/dev/SimulCost-Bench/data/{problem}/human_write/{task}_zero_shot_dataset.json"
@@ -190,15 +192,13 @@ def load_surrogate_model(problem, tolerance, config=None):
     with open(config, 'r') as f:
         config_dict = yaml.safe_load(f)
     
-    restore_dir = config_dict["restore_dir"]
-    try:
-        restore_step = config_dict["restore_step"] 
-    except:
-        restore_step = "best"
+        params_path = config_dict["best_checkpoint_path"]
+    '''try:
+        restore_dir = config_dict["direct_restore_dir"]
+        params_path = f"{restore_dir}/best_params.pth"
+    except:"'''
 
-    params_path = f"{restore_dir}/{tolerance}/{restore_step}_params.pth"
-    if not os.path.exists(params_path):
-        params_path = f"{restore_dir}/{restore_step}_params.pth"
+
     
     '''else:
         # Fallback to finding the model directory (original approach)
@@ -276,10 +276,14 @@ def prepare_model_input(params, problem, profile, verifier=None):
     
     # Define parameter order based on problem type
     if problem == "1D_heat_transfer":
-        # Static parameters: [L, k, h, rho, cp, T_inf, T_init]
+        # Static parameters: [L, k, h, rho, cp, T_inf, T_init, level_encoding] (matches heat_1d_static_mapper)
         static_order = ['L', 'k', 'h', 'rho', 'cp', 'T_inf', 'T_init']
-        # Tunable parameters: [cfl, n_space]  
-        tunable_order = ['n_space', 'cfl']
+        # Add level encoding like in training data
+        level_map = {'low': 0, 'medium': 1, 'high': 2}
+        level_encoding = level_map.get(verifier.tolerance if verifier and hasattr(verifier, 'tolerance') else 'medium', 1)
+        
+        # Tunable parameters: [cfl, n_space] (matches heat_1d_tunable_mapper)
+        tunable_order = ['cfl', 'n_space']
     elif problem == "2D_heat_transfer":
         # Static parameters: [T_top, T_bottom, T_left, T_right]
         static_order = ['T_top', 'T_bottom', 'T_left', 'T_right']
@@ -294,42 +298,130 @@ def prepare_model_input(params, problem, profile, verifier=None):
         # Import get_tolerance from general_utils  
         from general_utils import get_tolerance
         
-        # Static parameters: [L, gamma, case_one_hot, precision_level]
-        # Note: case is encoded as one-hot vector like in _dict_to_tensor
-        case_values = ['sod', 'lax', 'mach_3']
+        # Static parameters: case_one_hot (3 elements) + [level_encoding] (matches euler_1d_static_mapper)
+        # Note: case mapping must match exactly: {"sod": 0, "lax": 1, "mach_3": 2}
+        case_mapping = {
+            "sod": 0,
+            "lax": 1, 
+            "mach_3": 2
+        }
+        
         case_str = str(static_params.get('case', 'sod'))
-        case_one_hot = [0.0] * len(case_values)
-        if case_str in case_values:
-            case_one_hot[case_values.index(case_str)] = 1.0
+        case_one_hot = [0.0, 0.0, 0.0]
+        if case_str in case_mapping:
+            case_one_hot[case_mapping[case_str]] = 1.0
         
-        # Get precision_level from verifier.tolerance using get_tolerance()
-        precision_level_value = get_tolerance(problem, verifier.tolerance) if verifier and hasattr(verifier, 'tolerance') else 0.02
-        #precision_level_value = 0.01
+        # Use level encoding instead of tolerance value
+        level_map = {'low': 0, 'medium': 1, 'high': 2}
+        level_encoding = level_map.get(verifier.tolerance if verifier and hasattr(verifier, 'tolerance') else 'medium', 1)
         
-        # Build static_values: case_one_hot + [precision_level]
-        # Ignore 'L' and 'gamma' as instructed
-        static_values = case_one_hot + [precision_level_value]
+        # Build static_values: case_one_hot + [level_encoding] 
+        static_values = case_one_hot + [level_encoding]
         
-        # Tunable parameters: [cfl, beta, k, n_space]
-        #tunable_order = ['cfl', 'beta', 'k', 'n_space']
-        #if verifier.task == "n_space":
-        #    tunable_order = ['cfl', 'n_space', 'k', 'beta']
-        #elif verifier.task == "cfl":
-        #    tunable_order = ['cfl', 'beta', 'k', 'n_space']
-        tunable_order = ['cfl', 'n_space', 'k', 'beta']
+        # Tunable parameters: [cfl, n_space, beta, k] (matches euler_1d_tunable_mapper order)
+        tunable_order = ['cfl', 'n_space', 'beta', 'k']
+        
+    elif problem == "ns_channel_2d":
+        # Static parameters: [length, breadth, mu, rho, level_encoding] + boundary_onehot (matches ns_channel_2d_static_mapper)
+        
+        # One-hot encoding for boundary condition
+        boundary_condition = static_params.get('boundary_condition', 'channel_flow')
+        boundary_conditions = ['channel_flow', 'back_stair_flow', 'expansion_channel', 'cube_driven_flow']
+        boundary_onehot = [0.0] * len(boundary_conditions)
+        if boundary_condition in boundary_conditions:
+            boundary_onehot[boundary_conditions.index(boundary_condition)] = 1.0
+        
+        # Use level encoding
+        level_map = {'low': 0, 'medium': 1, 'high': 2}
+        level_encoding = level_map.get(verifier.tolerance if verifier and hasattr(verifier, 'tolerance') else 'medium', 1)
+        
+        # Static fluid properties and parameters
+        static_base = [
+            static_params.get('length', 20.0),
+            static_params.get('breadth', 1.0),
+            static_params.get('mu', 0.01),
+            static_params.get('rho', 1.0),
+            level_encoding
+        ]
+        
+        # Combine static_base + boundary_onehot
+        static_values = static_base + boundary_onehot
+        
+        # Tunable parameters: [mesh_x, mesh_y, omega_u, omega_v, omega_p, diff_u_threshold, diff_v_threshold, res_iter_v_threshold]
+        # (matches ns_channel_2d_tunable_mapper order)
+        tunable_order = ['mesh_x', 'mesh_y', 'omega_u', 'omega_v', 'omega_p', 'diff_u_threshold', 'diff_v_threshold', 'res_iter_v_threshold']
+        
+    elif problem == "ns_transient_2d":
+        # Static parameters: boundary_onehot (6 elements) + [reynolds_encoding, level_encoding] (matches ns_transient_2d_static_mapper)
+        
+        # One-hot encoding for boundary condition (1-6)
+        boundary_condition = static_params.get('boundary_condition', 1)
+        boundary_onehot = [0.0] * 6
+        if 1 <= boundary_condition <= 6:
+            boundary_onehot[boundary_condition - 1] = 1.0  # Convert to 0-indexed
+        
+        # Reynolds number encoding (1k=0, 100k=1)
+        reynolds_num = static_params.get('reynolds_num', 1000.0)
+        reynolds_encoding = 1 if reynolds_num >= 50000 else 0  # 100k vs 1k
+        
+        # Use level encoding
+        level_map = {'low': 0, 'medium': 1, 'high': 2}
+        level_encoding = level_map.get(verifier.tolerance if verifier and hasattr(verifier, 'tolerance') else 'medium', 1)
+        
+        # Combine boundary_onehot + [reynolds_encoding, level_encoding]
+        static_values = boundary_onehot + [reynolds_encoding, level_encoding]
+        
+        # Tunable parameters: [cfl, resolution, relaxation_factor, residual_threshold] (matches ns_transient_2d_tunable_mapper order)
+        tunable_order = ['cfl', 'resolution', 'relaxation_factor', 'residual_threshold']
         
     else:
         raise ValueError(f"Unknown problem type: {problem}")
     
     # Create static feature tensor
-    if problem == "euler_1d":
-        pass
+    if problem == "1D_heat_transfer":
+        # Include level encoding as the last element
+        static_values = [static_params.get(key, 0.0) for key in static_order] + [level_encoding]
+    elif problem == "euler_1d":
+        pass  # static_values already set above
+    elif problem == "ns_channel_2d":
+        pass  # static_values already set above
+    elif problem == "ns_transient_2d":
+        pass  # static_values already set above
     else:
         static_values = [static_params.get(key, 0.0) for key in static_order]
     static_tensor = torch.tensor(static_values, dtype=torch.float32, device=device).unsqueeze(0)
     
     # Create tunable feature tensor
-    tunable_values = [params.get(key, 0.0) for key in tunable_order]
+    if problem == "ns_channel_2d":
+        # Special handling for ns_channel_2d parameters
+        tunable_values = []
+        for key in tunable_order:
+            if key == 'mesh_x' or key == 'mesh_y':
+                # Convert to int then float for mesh parameters
+                tunable_values.append(float(int(params.get(key, 64 if key == 'mesh_x' else 16))))
+            elif key == 'res_iter_v_threshold':
+                # Handle res_iter_v_threshold which can be string or float
+                res_iter_v_threshold = params.get('res_iter_v_threshold', 'exp_decay')
+                if isinstance(res_iter_v_threshold, str) and res_iter_v_threshold == 'exp_decay':
+                    tunable_values.append(0.0)  # Use 0.0 to indicate exp_decay
+                else:
+                    tunable_values.append(float(res_iter_v_threshold))
+            else:
+                tunable_values.append(params.get(key, 0.0))
+    elif problem == "ns_transient_2d":
+        # Special handling for ns_transient_2d parameters
+        tunable_values = []
+        for key in tunable_order:
+            if key == 'resolution':
+                # Convert to int then float for resolution parameter
+                tunable_values.append(float(int(params.get(key, 200))))
+            else:
+                # Default values: cfl=0.05, relaxation_factor=1.3, residual_threshold=0.01
+                default_vals = {'cfl': 0.05, 'relaxation_factor': 1.3, 'residual_threshold': 0.01}
+                tunable_values.append(params.get(key, default_vals.get(key, 0.0)))
+    else:
+        tunable_values = [params.get(key, 0.0) for key in tunable_order]
+    
     tunable_tensor = torch.tensor(tunable_values, dtype=torch.float32, device=device).unsqueeze(0)
     
     return static_tensor, tunable_tensor
@@ -340,9 +432,9 @@ def evaluate(params,
              qid,
              backend: Literal["surrogate", "ground_truth"]="surrogate",
              surrogate_config=None,
-             soft_success=True,
+             use_soft_success=True,
              prev_cost=0,
-             threshold=0.99):
+             threshold=None):
     """
     Evaluate simulation parameters using the verifier.
     
@@ -358,7 +450,7 @@ def evaluate(params,
     #gt_success, gt_cost, gt_score = verifier.metric(params, profile, qid, soft_success=soft_success, prev_cost=prev_cost)
     if backend == "ground_truth":
         #pdb.set_trace()
-        success, cost, score = verifier.metric(params, profile, qid, soft_success=soft_success, prev_cost=prev_cost)
+        success, cost, score = verifier.metric(params, profile, qid, soft_success=use_soft_success, prev_cost=prev_cost)
         success = float(success)
         efficiency = verifier.best_costs[qid] / (1e-3 + cost)
             
@@ -376,17 +468,35 @@ def evaluate(params,
             
             # prediction is a tensor of shape [batch_size, 2] containing [success, cost]
             # Extract success and cost predictions
-            success= float(prediction[0, 0])  # First output is success probability 
-            cost= float(prediction[0, 1])     # Second output is cost
+            with open(surrogate_config, 'r') as f:
+                cfg = yaml.safe_load(f)
+            success_target = cfg["dataset"].get("success_target", "score")
+            preproc_cost = cfg["dataset"].get("preproc_cost", "score")
+
+            if success_target == "score":
+                success = float(prediction[0, 0])  # First output is success probability 
+            else:
+                success = soft_success(float(prediction[0, 0]), get_tolerance(verifier.problem, verifier.tolerance))
             
-            if cost<= 0:
-                return 0, cost, 0
+            if preproc_cost:
+                cost = reverse_preproc(float(prediction[0, 1]), params)
+            else:
+                cost= float(prediction[0, 1])     # Second output is cost
+            
+            #pdb.set_trace()
+            if cost <= 0:
+                if "n_space" in params:
+                    n_space = int(params.get("n_space"))
+                    cfl = params.get("cfl")
+                    cost = 1.05 * n_space * n_space / cfl
+                else:
+                    cost = verifier.best_costs[qid]
             
             # Ensur"e reasonable bounds
             #success= max(0.0, min(1.0, success))  # Clamp between 0 and 1
             efficiency = verifier.best_costs[qid] / (1e-3 + cost + prev_cost)
             
-            if not soft_success:
+            if not use_soft_success:
                 success = 1.0 if success >= 0.99 else 0
             else:
                 # Score combines success probability and cost efficiency  
@@ -402,7 +512,6 @@ def evaluate(params,
         raise ValueError(f"Unknown backend: {backend}")
         
     
-    #pdb.set_trace()
     #return max(0, score)  # Ensure non-negative score
     return max(0, success), efficiency, max(0, score)
     #except Exception as e:
@@ -415,20 +524,48 @@ def sample_sols_refined(
     verifier,
     profile,
     qid,
+    level,
     num_samples=5,
     gt_sol=None,
     sampler="linear",
     backend="surrogate",
     surrogate_config=None,
     soft_succ=True,
-    threshold=None
+    threshold=None,
+    ratio=None
 ):
     if task not in INFO:
         raise ValueError(f"Unknown task: {task}")
     
-    task_info = INFO[task]
-    param_range = task_info["range"][problem]
-    param_type = task_info.get("type", "float")
+    #task_info = INFO[task]
+    #param_range = task_info["range"]
+    task_info = {
+        "n_space":{
+            "range":{
+                "low": [64, 128],
+                "medium": [64, 512],
+                "high": [64, 512]
+            }
+        },
+        "mesh_x":{
+            "range":{
+                "low": [16, 64],
+                "medium": [16, 128],
+                "high": [16, 128]
+            }
+        },
+        "resolution":{
+            "range":{
+                "low": [32, 100],
+                "medium": [32, 100],
+                "high": [64, 150]
+            }
+        }
+            
+    }
+    param_info = task_info[task]
+    param_type = param_info.get("type", "int")
+    param_range = param_info["range"][level]
     
     solutions = []
 
@@ -450,14 +587,18 @@ def sample_sols_refined(
             
             params = copy.deepcopy(gt_sol)
             params[task] = value
-       
+
+            if problem == "ns_channel_2d":
+                params["mesh_y"] = int(value * ratio)
+            elif problem == "ns_transient_2d":
+                params["resolution"] = 2 * (params["resolution"] // 2)
+
             if not threshold:
-                success, efficiency, score = evaluate(params, verifier, profile, qid, backend=backend, surrogate_config=surrogate_config, soft_success=soft_succ)
+                success, efficiency, score = evaluate(params, verifier, profile, qid, backend=backend, surrogate_config=surrogate_config, use_soft_success=soft_succ)
             else:
-                success, efficiency, score = evaluate(params, verifier, profile, qid, backend=backend, surrogate_config=surrogate_config, soft_success=soft_succ, threshold=threshold)
+                success, efficiency, score = evaluate(params, verifier, profile, qid, backend=backend, surrogate_config=surrogate_config, use_soft_success=soft_succ, threshold=threshold)
             solutions.append((params, success, efficiency))
     
-    #pdb.set_trace()
     # Finally add dummy solution
     #dummy_success, dummy_efficiency, _ = evaluate(verifier.best_params[qid], verifier, profile, qid, backend=backend, surrogate_config=surrogate_config, soft_success=soft_succ)
     #solutions.append((verifier.best_params[qid], dummy_success, dummy_efficiency))
@@ -510,7 +651,7 @@ def sample_sols(problem, task, verifier, profile, num_samples=5, gt_sol=None, sa
                     if param != task and param in INFO:
                         params[param] = INFO[param].get("initial", (INFO[param]["range"][0] + INFO[param]["range"][1]) / 2)
             
-            success, cost, score = evaluate(params, verifier, profile, backend=backend, surrogate_config=surrogate_config, soft_success=soft_succ)
+            success, cost, score = evaluate(params, verifier, profile, backend=backend, surrogate_config=surrogate_config, use_soft_success=soft_succ)
             solutions.append((params, score))
     
     elif sampler == "linear":
@@ -548,7 +689,7 @@ def sample_sols(problem, task, verifier, profile, num_samples=5, gt_sol=None, sa
                     if param != task and param in INFO:
                         params[param] = INFO[param].get("initial", (INFO[param]["range"][0] + INFO[param]["range"][1]) / 2)'''
             
-            success, cost, score = evaluate(params, verifier, profile, backend=backend, surrogate_config=surrogate_config, soft_success=soft_succ)
+            success, cost, score = evaluate(params, verifier, profile, backend=backend, surrogate_config=surrogate_config, use_soft_success=soft_succ)
             solutions.append((params, score))
     
     elif sampler == "none":

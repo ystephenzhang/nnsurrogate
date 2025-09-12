@@ -61,11 +61,12 @@ def run_train(cfg, model_class, dataset_class, trainer_class):
 
     print(OmegaConf.to_yaml(cfg))
 
-    if cfg.board:
+    '''if cfg.board:
         wandb.init(
             project=f"{cfg.project}-train",
             config=OmegaConf.to_container(cfg, resolve=True),
-        )
+            name = cfg.runname
+        )'''
 
     # Model and dataset creation
     model = model_class(cfg.model)
@@ -96,7 +97,7 @@ def run_train(cfg, model_class, dataset_class, trainer_class):
     # Infinite data loopers for training and testing
     train_loopers = InfiniteDataLooper(train_loader)
     test_loopers = InfiniteDataLooper(test_loader)
-    
+
     # Best checkpoint tracking
     best_test_loss = float('inf')
     best_checkpoint_path = None
@@ -106,6 +107,7 @@ def run_train(cfg, model_class, dataset_class, trainer_class):
     print("Accumulating channel mean and std for model...")
     for _ in tqdm(range(accumulation_steps)):
         data = next(train_loopers)
+        #pdb.set_trace()
         trainer.accumulate(data)
     print("Accumulation done. The stats are:")
     try:
@@ -140,7 +142,7 @@ def run_train(cfg, model_class, dataset_class, trainer_class):
                 if current_test_loss < best_test_loss:
                     best_test_loss = current_test_loss
                     # Save best checkpoint
-                    ckpt_dir = f"{cfg.dump_dir}/{cfg.project}/{time_stamp}"
+                    ckpt_dir = f"{cfg.dump_dir}/{cfg.project}/{cfg.run_name}"
                     if not os.path.exists(ckpt_dir):
                         os.makedirs(ckpt_dir)
                     
@@ -192,8 +194,10 @@ def run_train(cfg, model_class, dataset_class, trainer_class):
     else:
         print("\nTraining completed. No best checkpoint was saved (no test loss evaluation occurred).")
     
-    if cfg.board:
-        wandb.finish()
+    '''if cfg.board:
+        wandb.finish()'''
+    
+    return best_checkpoint_path
 
 
 # =====================================================================

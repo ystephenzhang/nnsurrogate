@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Automated pipeline for data generation and model training.
+Standalone training script for pre-existing datasets.
 
-This script provides functions to automatically generate training data and train
-surrogate models for physics simulation optimization problems.
+This script conducts training and rollout on datasets that are already prepared,
+taking the same arguments as train_pipeline.py but excluding dataset generation parameters.
 """
 
 import sys
@@ -21,7 +21,6 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import numpy as np
 # Add necessary paths
 sys.path.append("/home/ubuntu/dev/src")
-from data_gen.generate import generate
 from template_trainer.run_train import run_train, get_class_from_name, get_activation_module
 from template_trainer.run_rollout import run_rollout
 from omegaconf import DictConfig
@@ -237,12 +236,9 @@ def generate_distribution_plots(data_folder, bins=30):
     return plot_files
 
 
-def pipeline(
-    problem,
-    task,
-    total_samples=None,
-    samples_per_problem=None,
-    success_target: Literal["error", "score"]="score",
+def train_standalone(
+    dataset_path,
+    success_target="score",
     preprocess_cost=False,
     hidden_layers=3,
     hidden_dim=64,
@@ -252,16 +248,15 @@ def pipeline(
     learning_rate=1e-3,
     weight_decay=1e-4,
     use_wandb=True,
-    save_best_only=True
+    save_best_only=True,
+    run_name=None,
+    project_name=None
 ):
     """
-    Automated pipeline for data generation and model training.
+    Standalone training on pre-existing dataset.
     
     Args:
-        problem (str): Problem type (e.g., "ns_channel_2d", "1D_heat_transfer", etc.)
-        task (str): Task parameter to optimize (e.g., "mesh_x", "omega_u", etc.)
-        total_samples (int): Total number of samples to generate for training (mutually exclusive with samples_per_problem)
-        samples_per_problem (int): Number of samples per problem (m linear + m random each, mutually exclusive with total_samples)
+        dataset_path (str): Path to existing dataset directory (containing metadata.json, train/, test/)
         success_target (str): Target for success metric ("error" or "score")
         preprocess_cost (bool): Apply preprocessing to cost values
         hidden_layers (int): Number of hidden layers
@@ -273,74 +268,70 @@ def pipeline(
         weight_decay (float): Weight decay for optimizer
         use_wandb (bool): Whether to use Weights & Biases for logging
         save_best_only (bool): Whether to save only the best checkpoint
+        run_name (str): Custom run name for wandb (optional)
+        project_name (str): Custom project name for wandb (optional)
         
     Returns:
-        dict: Dictionary containing paths and information about generated data and trained model
+        dict: Dictionary containing paths and information about trained model
     """
-    print(f"Starting automated pipeline for {problem} - {task}")
+    print(f"Starting standalone training with dataset: {dataset_path}")
     
-    project_name = f"{problem}_{task}"
-    if samples_per_problem is not None:
-        run_name = f"m{samples_per_problem}_{success_target}_p{str(preprocess_cost)}_h{hidden_layers}_d{hidden_dim}"
-    else:
-        run_name = f"{str(total_samples)}_{success_target}_p{str(preprocess_cost)}_h{hidden_layers}_d{hidden_dim}"
-    wandb.init(
-            project=f"{project_name}-train",
-            name=run_name)
-    # Step 1: Data Generation
-    print("=" * 60)
-    print("STEP 1: DATA GENERATION")
-    print("=" * 60)
+    # Validate dataset path
+    if not os.path.exists(dataset_path):
+        raise ValueError(f"Dataset path does not exist: {dataset_path}")
     
-    try:
-        if samples_per_problem is not None:
-            #data_dir = f"/home/ubuntu/dev/data/numerical/{problem}/{task}_m{samples_per_problem}_p{str(preprocess_cost)}"
-            data_dir = f"/home/ubuntu/dev/data/numerical/{problem}/{task}_m{samples_per_problem}_pFalse" 
-        else:
-            #data_dir = f"/home/ubuntu/dev/data/numerical/{problem}/{task}_{str(total_samples)}_p{str(preprocess_cost)}"
-            data_dir = f"/home/ubuntu/dev/data/numerical/{problem}/{task}_{str(total_samples)}_pFalse"
-        
-        # Check if data directory exists and contains data
-        if os.path.exists(data_dir) and os.listdir(data_dir):
-            print(f"✓ Data already exists at: {data_dir}. Skipping data generation.")
-        else:
-            print(f"Generating data to: {data_dir}")
-            generate(
-                problem=problem,
-                task=task,
-                total_samples=total_samples,
-                save_dir=data_dir,
-                #preprocess_cost=preprocess_cost,
-                preprocess_cost=False,
-                samples_per_problem=samples_per_problem
-            )
-            print(f"✓ Data generation completed. Data saved to: {data_dir}")
-    except Exception as e:
-        print(f"✗ Data generation failed: {str(e)}")
-        raise e
+    metadata_path = os.path.join(dataset_path, 'metadata.json')
+    if not os.path.exists(metadata_path):
+        raise ValueError(f"Metadata file not found: {metadata_path}")
     
-    # Step 2: Get data dimensions from metadata
-    metadata_path = os.path.join(data_dir, 'metadata.json')
+    train_path = os.path.join(dataset_path, 'train')
+    test_path = os.path.join(dataset_path, 'test')
+    if not (os.path.exists(train_path) and os.path.exists(test_path)):
+        raise ValueError(f"Train or test directories not found in: {dataset_path}")
+    
+    # Load metadata
     with open(metadata_path, 'r') as f:
         metadata = json.load(f)
     
+    # Extract information from dataset path if not provided
+    dataset_name = os.path.basename(dataset_path)
+    problem = metadata.get('problem', 'unknown')
+    task = metadata.get('task', 'unknown') 
+    
+    # Set project and run names
+    if project_name is None:
+        project_name = f"{problem}_{task}"
+    
+    if run_name is None:
+        run_name = f"{dataset_name}_h{hidden_layers}_d{hidden_dim}"
+    
+    # Initialize wandb
+    if use_wandb:
+        wandb.init(
+            project=f"{project_name}-train",
+            name=run_name
+        )
+    
+    # Get data dimensions from metadata
     static_dim = metadata['static_dim']
     tunable_dim = metadata['tunable_dim']
     input_dim = static_dim + tunable_dim
     target_dim = metadata['result_dim']
+    # success_target and preprocess_cost come from function parameters, not metadata
     
     print(f"Data dimensions - Static: {static_dim}, Tunable: {tunable_dim}, Input: {input_dim}, Target: {target_dim}")
+    print(f"Success target: {success_target}, Preprocess cost: {preprocess_cost}")
     
-    # Step 2.5: Log dataset artifact with distribution plots
-    print("=" * 60)
-    print("STEP 2.5: LOGGING DATASET ARTIFACT")
-    print("=" * 60)
+    # Log dataset artifact with distribution plots
+    #if use_wandb:
+    #    print("=" * 60)
+    #    print("LOGGING DATASET ARTIFACT")
+    #    print("=" * 60)
+    #    log_dataset_artifact_with_plots(dataset_path, project_name, run_name, metadata)
     
-    log_dataset_artifact_with_plots(data_dir, project_name, run_name, metadata)
-    
-    # Step 3: Model Training with different configurations
+    # Model Training
     print("=" * 60)
-    print("STEP 3: MODEL TRAINING")
+    print("MODEL TRAINING")
     print("=" * 60)
     
     config_name = f"{problem}_{task}_h{hidden_layers}_d{hidden_dim}"
@@ -378,7 +369,7 @@ def pipeline(
         },
         'dataset_workers': 4,
         'dataset': {
-            'dataset_root': data_dir,
+            'dataset_root': dataset_path,
             'success_target': success_target,
             'preproc_cost': preprocess_cost
         },
@@ -396,6 +387,7 @@ def pipeline(
         'plot_freq': 1000,
         'save_freq': 2000
     }
+    
     # Convert to DictConfig
     cfg = DictConfig(cfg_dict)
     
@@ -418,8 +410,9 @@ def pipeline(
         # Add timestamp and additional metadata
         cfg_dict_for_save['training_completed_at'] = timestamp
         cfg_dict_for_save['best_checkpoint_path'] = ckpt_dir
-        cfg_dict_for_save['data_directory'] = data_dir
+        cfg_dict_for_save['data_directory'] = dataset_path
         cfg_dict_for_save['pipeline_version'] = '1.0'
+        cfg_dict_for_save['standalone_script'] = True
         
         with open(config_save_path, 'w') as f:
             yaml.dump(cfg_dict_for_save, f, default_flow_style=False, indent=2)
@@ -428,11 +421,10 @@ def pipeline(
         
     except Exception as e:
         print(f"✗ Failed to save training configuration: {str(e)}")
-        # Don't raise exception to allow training to continue
     
-    # Step 3: Run rollout on best checkpoint and log to wandb
+    # Run rollout on best checkpoint and log to wandb
     print("=" * 60)
-    print("STEP 3: ROLLOUT GENERATION")
+    print("ROLLOUT GENERATION")
     print("=" * 60)
     
     try:
@@ -446,40 +438,39 @@ def pipeline(
         run_rollout(rollout_cfg, model_class, dataset_class, trainer_class)
         
         # Log rollout figure to existing wandb session
-        rollout_fig_path = "/home/ubuntu/dev/src/outputs/rollout_fig.png"
-        if os.path.exists(rollout_fig_path):
-            wandb.log({"rollout_plot": wandb.Image(rollout_fig_path)})
-            print(f"✓ Rollout figure logged to wandb: {rollout_fig_path}")
-        else:
-            print(f"✗ Rollout figure not found at: {rollout_fig_path}")
+        if use_wandb:
+            rollout_fig_path = "/home/ubuntu/dev/src/outputs/rollout_fig.png"
+            if os.path.exists(rollout_fig_path):
+                wandb.log({"rollout_plot": wandb.Image(rollout_fig_path)})
+                print(f"✓ Rollout figure logged to wandb: {rollout_fig_path}")
+            else:
+                print(f"✗ Rollout figure not found at: {rollout_fig_path}")
             
     except Exception as e:
         print(f"✗ Rollout generation failed: {str(e)}")
-        # Don't raise the exception to allow pipeline to complete
         
-    wandb.finish()
+    if use_wandb:
+        wandb.finish()
+    
+    return {
+        'checkpoint_path': ckpt_dir,
+        'config_path': config_save_path,
+        'dataset_path': dataset_path,
+        'run_name': run_name,
+        'project_name': project_name
+    }
+
 
 def main():
-    """Command line interface for the training pipeline."""
+    """Command line interface for the standalone training script."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Automated data generation and training pipeline')
-    parser.add_argument('-p', '--problem', type=str, required=True,
-                       help='Problem type (e.g., ns_channel_2d, 1D_heat_transfer)')
-    parser.add_argument('-t', '--task', type=str, required=True,
-                       help='Task parameter to optimize (e.g., mesh_x, omega_u)')
-    parser.add_argument('-n', '--total_samples', type=int,
-                       help='Total number of samples to generate')
-    parser.add_argument('-m', '--samples_per_problem', type=int,
-                       help='Number of samples per problem (m linear + m random each)')
-    parser.add_argument('-s', '--success_target', type=str, default="score",
-                       choices=["error", "score"],
-                       help='Target for success metric ("error" or "score", default: score)')
-    parser.add_argument('-c', '--preprocess_cost', action='store_true',
-                       help='Apply preprocessing to cost values')
+    parser = argparse.ArgumentParser(description='Standalone training script for pre-existing datasets')
+    parser.add_argument('-d', '--dataset_path', type=str, required=True,
+                       help='Path to existing dataset directory (e.g., /path/to/data/heat_1d/n_space_m30_pTrue)')
     parser.add_argument('-l', '--hidden_layers', type=int, default=3,
                        help='Number of hidden layers (default: 3)')
-    parser.add_argument('-d', '--hidden_dims', type=int, default=64,
+    parser.add_argument('--hidden_dims', type=int, default=64,
                        help='Hidden dimension size (default: 64)')
     parser.add_argument('-e', '--epochs', type=int, default=40,
                        help='Number of training epochs (default: 40)')
@@ -493,22 +484,24 @@ def main():
                        help='Weight decay (default: 1e-4)')
     parser.add_argument('-x', '--no_wandb', action='store_true',
                        help='Disable Weights & Biases logging')
-    parser.add_argument('-f', '--project_suffix', type=str, default="",
-                       help='Suffix to add to project name')
+    parser.add_argument('-n', '--run_name', type=str,
+                       help='Custom run name for wandb (optional)')
+    parser.add_argument('-p', '--project_name', type=str,
+                       help='Custom project name for wandb (optional)')
+    parser.add_argument('-s', '--success_target', type=str, default="score",
+                       choices=["error", "score"],
+                       help='Target for success metric ("error" or "score", default: score)')
+    parser.add_argument('-c', '--preprocess_cost', action='store_true',
+                       help='Apply preprocessing to cost values')
     
     args = parser.parse_args()
     
-    # Validation: either total_samples or samples_per_problem must be provided
-    if not args.total_samples and not args.samples_per_problem:
-        parser.error("Either --total_samples or --samples_per_problem must be specified")
-    if args.total_samples and args.samples_per_problem:
-        parser.error("Cannot specify both --total_samples and --samples_per_problem")
+    # Validate dataset path
+    if not os.path.exists(args.dataset_path):
+        parser.error(f"Dataset path does not exist: {args.dataset_path}")
     
-    pipeline(
-        problem=args.problem,
-        task=args.task,
-        total_samples=args.total_samples,
-        samples_per_problem=args.samples_per_problem,
+    result = train_standalone(
+        dataset_path=args.dataset_path,
         success_target=args.success_target,
         preprocess_cost=args.preprocess_cost,
         hidden_layers=args.hidden_layers,
@@ -519,10 +512,14 @@ def main():
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         use_wandb=not args.no_wandb,
-        save_best_only=True
+        save_best_only=True,
+        run_name=args.run_name,
+        project_name=args.project_name
     )
     
-    print(f"\nPipeline completed!")
+    print(f"\nStandalone training completed!")
+    print(f"Checkpoint saved to: {result['checkpoint_path']}")
+    print(f"Config saved to: {result['config_path']}")
 
 
 if __name__ == "__main__":

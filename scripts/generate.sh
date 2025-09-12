@@ -1,0 +1,1 @@
+../src/data_gen/generate.py complementary -p heat_1d -t n_space -l low -n  -d /home/ubuntu/dev/data/numerical/ns_channel_2d/mesh_x_200_pFalse -r 16 200 -s 1000

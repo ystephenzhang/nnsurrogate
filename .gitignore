@@ -10,3 +10,4 @@ wandb/*
 temp/*
 **/__pycache__/*
 src/_archive/*
+src/data_gen/*.json

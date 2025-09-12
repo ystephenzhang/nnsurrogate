@@ -36,9 +36,32 @@ class SimRewardDataPipe(BaseDataPipe):
         
         data = torch.load(file_path, map_location='cpu', weights_only=True)
         organized = tuple(torch.stack(tensors) for tensors in zip(*data))
+        target = self.cfg.get("success_target", "score")
+        preproc = self.cfg.get("preproc_cost", None)
+        
+        first_tensor, second_tensor, third_tensor = organized
+        if third_tensor.shape[1] == 3:
+            if target == 'score':
+                # Keep dim 0 and 2 of the third tensor
+                processed_third = torch.stack([third_tensor[:, 0], third_tensor[:, 2]], dim=1)
+            elif target == 'error':
+                # Keep dim 1 and 2 of the third tensor
+                processed_third = torch.stack([third_tensor[:, 1], third_tensor[:, 2]], dim=1)
+        else:
+            processed_third = third_tensor
+            
+        if preproc:
+            if 'heat_1d' in file_path or 'euler_1d' in file_path:
+                cfl = second_tensor[:, 0]
+                n_space = second_tensor[:, 1]
+                processed_third[:, 1] /= (n_space * n_space * n_space / cfl)
+            elif "transient" in file_path:
+                n_space = second_tensor[:, 1]
+                cfl = second_tensor[:, 0]
+                processed_third[:, 1] /= (n_space * n_space * n_space / cfl)
+        organized = (first_tensor, second_tensor, processed_third)
         
         # Get the number of samples from the first dimension of the first tensor
         length = organized[0].shape[0]
-        
         #return (torch.cat((x_s, x_t), dim=-1), y), length 
         return organized, length

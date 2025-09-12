@@ -7,8 +7,8 @@ project: 1D_heat_transfer-high_perc-preprocessed
 problem: 1D_heat_transfer
 
 restore_dir: /home/ubuntu/dev/data/surrogates/1D_heat_transfer/
-#direct_restore_dir: /home/ubuntu/dev/src/template_trainer/output/1D_heat_transfer-high_perc-preprocessed/20250822-135948/
-direct_restore_dir: /home/ubuntu/dev/data/surrogates/1D_heat_transfer/high
+direct_restore_dir: /home/ubuntu/dev/src/template_trainer/output/1D_heat_transfer-high_perc-preprocessed/20250822-135948/
+#direct_restore_dir: /home/ubuntu/dev/data/surrogates/1D_heat_transfer/high
 
 base_seed: 42
 batch: 16

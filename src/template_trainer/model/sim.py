@@ -7,7 +7,7 @@ import pdb
 class SimRewardModel(Base):
     def __init__(self, cfg):
         super().__init__(cfg)
-        self.preprocessed_output = cfg.preprocessed_output
+        #self.preprocessed_output = cfg.preprocessed_output
         self.n_static = cfg.n_static
         self.n_tunable = cfg.n_tunable
         self.n_hidden = cfg.n_hidden
@@ -62,6 +62,17 @@ class SimRewardModel(Base):
         normalized_input = self._inputNormalizer(torch.cat([x_s, x_t], dim=-1), accumulate=False)
         return normalized_input
     
+    def _postprocess(self, output, **kwargs):
+        """
+        Postprocess the normalized output tensor after the forward pass.
+
+        By default, this method denormalizes (or not) the output using the target normalizer.
+
+        Args:
+            output (torch.Tensor): Normalized output tensor of shape (B, ..., C_out).
+        """
+        return output if not self._recover_pred_unit else self._targetNormalizer.inverse(output)
+    
     def forward(self, input, **kwargs):
         """
         Perform the forward pass of the model with normalization.
@@ -82,8 +93,6 @@ class SimRewardModel(Base):
         input = self._preprocess(input, **kwargs)
         pred = self._forward(input, **kwargs)
         pred = self._postprocess(pred, **kwargs)
-
-        if self.preprocessed_output:
-            pred[:, 1] = pred[:, 1] * x_t[:, 0] * x_t[:, 0] / x_t[:, 1]
+        #pred[:, 1] = pred[:, 1] * x_t[:, 1] * x_t[:, 1] / x_t[:, 0]
         return pred
         
