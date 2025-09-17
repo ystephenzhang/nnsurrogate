@@ -456,6 +456,12 @@ def evaluate(params,
             
     elif backend == "surrogate":
         # Use surrogate model for evaluation
+        if surrogate_config == "random":
+            success = random.uniform(0, 1)
+
+            efficiency = random.uniform(0.1, 10)
+
+            return success, efficiency, success * efficiency
         
         # Load the surrogate model
         model = load_surrogate_model(verifier.problem, verifier.tolerance, surrogate_config)
