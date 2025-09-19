@@ -162,7 +162,22 @@ def example_usage():
         print(f"{task_mode}: {non_empty_count}/{len(df)} models with data")
 
 def main():
-    models = ["ab_openai_init_refined_t05", "ab_openai_init_refined", "o4-mini", "llama3.2_3b_base", "qwen3_8b", "O_Llama_relaxed_t05", "O_Qwen_relaxed_t05", "G_openai", "G_Llama", "G_Qwen", "BO_zero", "BO_default"]
+    models = ["ab_openai_init_refined_t05",
+              "ab_openai_init_refined",
+              "o4-mini",
+              "llama3.2_3b_base", 
+              "qwen3_8b",
+              "O_Llama_relaxed_t05",
+              "O_Qwen_relaxed_t05",
+              "G_openai",
+              "G_Llama",
+              "G_Qwen",
+              "BO_zero",
+              "BO_default",
+              "ab_openai_icl",
+              "ab_openai_numerical",
+              "ab_openai_random",
+              "ab_openai_hard"]
     results = create_individual_task_csvs(
         model_list=models,
         output_dir="/home/ubuntu/dev/SimulCost-Bench/eval_results/summary"

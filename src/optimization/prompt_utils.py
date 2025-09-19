@@ -17,6 +17,7 @@ import time
 from openai import OpenAI
 import pdb
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 
 def call_local_server_function_parallel(
     messages, model, tokenizer, max_decode_steps=50, temperature=0.8
@@ -70,6 +71,12 @@ def call_openai_server_single_prompt(
   """The function to call OpenAI server with an input string."""
   if model.startswith("deepseek"):
     client = OpenAI(base_url="https://api.deepseek.com")
+  elif model.startswith("anthropic"):
+    client = client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],  # 只放 OpenRouter Key
+    )
+    check = client.models.list()
   else:
     client = OpenAI()
     check = client.models.list()
@@ -86,6 +93,13 @@ def call_openai_server_single_prompt(
             model=model,
             messages=messages
         )
+      elif model.startswith("anthropic"):
+        completion = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            extra_body={"provider": {"only": ["amazon-bedrock"], "allow_fallbacks": False}},
+        )
+        print(completion.usage)
       else:
         '''completion = client.chat.completions.create(
             model=model,
