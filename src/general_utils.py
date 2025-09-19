@@ -13,14 +13,15 @@ Your task is to minimize a black-box function's value by refining n_space value 
 """
 
 NAME_TO_FOLDER = {
-    "1D_heat_transfer":"heat_1d", 
+    "1D_heat_transfer":"heat_1d",
     "heat_1d":"heat_1d",
     "2D_heat_transfer":"heat_steady_2d",
     "1D_burgers":"burgers_1d",
     "burgers_1d":"burgers_1d",
     "euler_1d": "euler_1d",
     "ns_channel_2d": "ns_channel_2d",
-    "ns_transient_2d": "ns_transient_2d"
+    "ns_transient_2d": "ns_transient_2d",
+    "epoch": "epoch"
 }
 
 _PROBLEM_TO_TOOL_NAME = {
@@ -204,6 +205,48 @@ INFO = {
         "type": "float",
         "search": "grid",
         "best_key": "best_residual_threshold"
+    },
+    "nx":{
+        "description": "Number of grid cells for spatial discretization - determines spatial resolution",
+        "range": [200, 3200],
+        "initial": 400,
+        "type": "int",
+        "search": "grid",
+        "best_key": "best_nx"
+    },
+    "dt_multiplier":{
+        "description": "Time-increment multiplier - controls temporal resolution",
+        "range": [0.80, 0.99],
+        "initial": 0.95,
+        "type": "float",
+        "search": "grid",
+        "best_key": "best_dt_multiplier"
+    },
+    "npart":{
+        "description": "Number of pseudoparticles per cell",
+        "range": [10, 50],
+        "initial": 20,
+        "type": "int",
+        "search": "grid",
+        "best_key": "best_npart"
+    },
+    "field_order":{
+        "description": "Field integration order",
+        "range": [2, 6],
+        "initial": 2,
+        "type": "int",
+        "search": "discrete",
+        "values": [2, 4, 6],
+        "best_key": "best_field_order"
+    },
+    "particle_order":{
+        "description": "Particle weighting order",
+        "range": [2, 5],
+        "initial": 3,
+        "type": "int",
+        "search": "discrete",
+        "values": [2, 3, 5],
+        "best_key": "best_particle_order"
     }
 }
 
@@ -277,11 +320,16 @@ def check_cost(problem, profile, params):
         cpu = extract_yaml_parameter(profile_path, 'cpu', True)
         visualization = extract_yaml_parameter(profile_path, 'visualization', 0)
         
-        cost, steps = runner(profile, boundary_condition, int(params["resolution"]), 
+        cost, steps = runner(profile, boundary_condition, int(params["resolution"]),
                              reynolds_num, params["cfl"], advection_scheme,
-                             vorticity_confinement, params["relaxation_factor"], 
+                             vorticity_confinement, params["relaxation_factor"],
                              params["residual_threshold"], total_runtime,
                              no_dye, cpu, visualization)
+    elif problem == "epoch":
+        runner = getattr(wrappers, f"runEpoch")
+        cost = runner(profile, int(params["nx"]), params["dt_multiplier"],
+                     int(params["npart"]), int(params["field_order"]),
+                     int(params["particle_order"]))
 
     return cost
 
@@ -427,14 +475,27 @@ def check_gt(
         visualization = extract_yaml_parameter(profile_path, 'visualization', 0)
         
         success, error = compare_func(
-            profile, boundary_condition, int(x["resolution"]), reynolds_num, x["cfl"], 
-            advection_scheme, vorticity_confinement, x["relaxation_factor"], 
+            profile, boundary_condition, int(x["resolution"]), reynolds_num, x["cfl"],
+            advection_scheme, vorticity_confinement, x["relaxation_factor"],
             x["residual_threshold"], total_runtime, no_dye, cpu, visualization,
-            profile, boundary_condition, int(gt["resolution"]), reynolds_num, gt["cfl"], 
-            advection_scheme, vorticity_confinement, gt["relaxation_factor"], 
+            profile, boundary_condition, int(gt["resolution"]), reynolds_num, gt["cfl"],
+            advection_scheme, vorticity_confinement, gt["relaxation_factor"],
             gt["residual_threshold"], total_runtime, no_dye, cpu, visualization,
             numeric_tolerance
         )
+    elif problem == "epoch":
+        # Map tolerance level to numerical value for epoch
+        tolerance_map = {
+            'low': 0.36,
+            'medium': 0.33,
+            'high': 0.30
+        }
+        numeric_tolerance = tolerance_map.get(tolerance, 0.33)
+        success, error = compare_func(profile, int(x["nx"]), x["dt_multiplier"],
+                                      int(x["npart"]), int(x["field_order"]), int(x["particle_order"]),
+                                      profile, int(gt["nx"]), gt["dt_multiplier"],
+                                      int(gt["npart"]), int(gt["field_order"]), int(gt["particle_order"]),
+                                      numeric_tolerance)
         
     if whether_soft_success:
         # Use appropriate tolerance for soft_success calculation
@@ -465,6 +526,8 @@ def check_gt(
             # For ns_channel_2d, success is already determined by the comparison function
             return success, error
         elif problem == "ns_transient_2d":
+            return success, error
+        elif problem == "epoch":
             return success, error
         else:
             return error < numeric_tolerance, error
@@ -535,10 +598,11 @@ def extract_static(profile_path):
     euler_1d_static = ['case']
     ns_channel_2d_static = ['length', 'breadth', 'mu', 'rho', 'boundary_condition']
     ns_transient_2d_static = ['boundary_condition', 'reynolds_num']
-    
+    epoch_static = ['L', 'L_target', 'a0', 'laser_lambda', 'laser_time', 'n_target', 'end_time']
+
     # Extract all parameters that aren't tunable
     all_static_keys = set()
-    
+
     # Add problem-specific static parameters based on what's in the config
     # Use more specific detection to avoid conflicts
     if "heat_1d" in profile_path:
@@ -556,6 +620,9 @@ def extract_static(profile_path):
     elif "ns_transient_2d" in profile_path:
         # NS Transient 2D specific - has boundary conditions and flow parameters
         all_static_keys.update(ns_transient_2d_static)
+    elif "epoch" in profile_path:
+        # Epoch specific - has laser and simulation parameters
+        all_static_keys.update(epoch_static)
     
     
     # Extract static parameters that exist in the config
@@ -590,6 +657,8 @@ def complete_params_with_initial(params, problem):
                           "diff_u_threshold", "diff_v_threshold", "res_iter_v_threshold"]
     elif problem == "ns_transient_2d":
         required_params = ["resolution", "cfl", "relaxation_factor", "residual_threshold"]
+    elif problem == "epoch":
+        required_params = ["nx", "dt_multiplier", "npart", "field_order", "particle_order"]
     else:
         raise ValueError(f"Unknown problem type: {problem}")
     
@@ -655,6 +724,11 @@ def get_tolerance(problem, level):
             'low': 0.6,
             'medium': 0.3,
             'high': 0.15
+        },
+        'epoch': {
+            'low': 0.36,
+            'medium': 0.33,
+            'high': 0.30
         }
     }
     
@@ -936,6 +1010,29 @@ def ns_transient_2d_tunable_mapper(params):
         int(params.get('resolution', 200)),
         params.get('relaxation_factor', 1.3),
         params.get('residual_threshold', 1e-02)
+    ], dtype=torch.float32)
+
+def epoch_static_mapper(profile_path, level):
+    """Map static parameters for epoch_nx to tensor format"""
+    import torch
+    static_params = extract_static(profile_path)
+
+    # Use level encoding: low=0, medium=1, high=2
+    level_map = {'low': 0, 'medium': 1, 'high': 2}
+    level_encoding = level_map.get(level, 1)  # Default to medium
+
+    return torch.tensor([
+        static_params.get('a0', 200.0),        # Normalized laser amplitude
+        static_params.get('n_target', 5.0),   # Density of target [n_cr]
+        level_encoding
+    ], dtype=torch.float32)
+
+def epoch_tunable_mapper(params):
+    """Map tunable parameters for epoch_nx to tensor format"""
+    return torch.tensor([
+        int(params.get('nx', 400)),              # Number of grid cells
+        params.get('dt_multiplier', 0.95),       # Time-increment multiplier
+        int(params.get('npart', 20)),           # Number of particles per cell
     ], dtype=torch.float32)
 
         
