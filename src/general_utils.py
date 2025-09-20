@@ -313,18 +313,30 @@ def check_cost(problem, profile, params):
         profile_path = f"/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs/{NAME_TO_FOLDER[problem]}/{profile}.yaml"
         boundary_condition = extract_yaml_parameter(profile_path, 'boundary_condition', 1)
         reynolds_num = extract_yaml_parameter(profile_path, 'reynolds_num', 1000.0)
+        total_runtime = extract_yaml_parameter(profile_path, 'total_runtime', 1.0)
+
+        # Prepare other parameters that are not in the main function signature
+        other_params = {}
         advection_scheme = extract_yaml_parameter(profile_path, 'advection_scheme', 'cip')
         vorticity_confinement = extract_yaml_parameter(profile_path, 'vorticity_confinement', 0.0)
-        total_runtime = extract_yaml_parameter(profile_path, 'total_runtime', 1.0)
         no_dye = extract_yaml_parameter(profile_path, 'no_dye', False)
         cpu = extract_yaml_parameter(profile_path, 'cpu', True)
         visualization = extract_yaml_parameter(profile_path, 'visualization', 0)
-        
+
+        if advection_scheme != 'cip':
+            other_params['advection_scheme'] = advection_scheme
+        if vorticity_confinement != 0.0:
+            other_params['vorticity_confinement'] = vorticity_confinement
+        if no_dye != False:
+            other_params['no_dye'] = no_dye
+        if cpu != True:
+            other_params['cpu'] = cpu
+        if visualization != 0:
+            other_params['visualization'] = visualization
+
         cost, steps = runner(profile, boundary_condition, int(params["resolution"]),
-                             reynolds_num, params["cfl"], advection_scheme,
-                             vorticity_confinement, params["relaxation_factor"],
-                             params["residual_threshold"], total_runtime,
-                             no_dye, cpu, visualization)
+                             reynolds_num, params["cfl"], params["relaxation_factor"],
+                             params["residual_threshold"], total_runtime, other_params)
     elif problem == "epoch":
         runner = getattr(wrappers, f"runEpoch")
         cost = runner(profile, int(params["nx"]), params["dt_multiplier"],
@@ -467,21 +479,33 @@ def check_gt(
         profile_path = f"/home/ubuntu/dev/SimulCost-Bench/costsci_tools/run_configs/{NAME_TO_FOLDER[problem]}/{profile}.yaml"
         boundary_condition = extract_yaml_parameter(profile_path, 'boundary_condition', 1)
         reynolds_num = extract_yaml_parameter(profile_path, 'reynolds_num', 1000.0)
+        total_runtime = extract_yaml_parameter(profile_path, 'total_runtime', 1.0)
+
+        # Prepare other parameters that are not in the main function signature
+        other_params = {}
         advection_scheme = extract_yaml_parameter(profile_path, 'advection_scheme', 'cip')
         vorticity_confinement = extract_yaml_parameter(profile_path, 'vorticity_confinement', 0.0)
-        total_runtime = extract_yaml_parameter(profile_path, 'total_runtime', 1.0)
         no_dye = extract_yaml_parameter(profile_path, 'no_dye', False)
         cpu = extract_yaml_parameter(profile_path, 'cpu', True)
         visualization = extract_yaml_parameter(profile_path, 'visualization', 0)
-        
+
+        if advection_scheme != 'cip':
+            other_params['advection_scheme'] = advection_scheme
+        if vorticity_confinement != 0.0:
+            other_params['vorticity_confinement'] = vorticity_confinement
+        if no_dye != False:
+            other_params['no_dye'] = no_dye
+        if cpu != True:
+            other_params['cpu'] = cpu
+        if visualization != 0:
+            other_params['visualization'] = visualization
+        #pdb.set_trace()
         success, error = compare_func(
             profile, boundary_condition, int(x["resolution"]), reynolds_num, x["cfl"],
-            advection_scheme, vorticity_confinement, x["relaxation_factor"],
-            x["residual_threshold"], total_runtime, no_dye, cpu, visualization,
+            x["relaxation_factor"], x["residual_threshold"], total_runtime,
             profile, boundary_condition, int(gt["resolution"]), reynolds_num, gt["cfl"],
-            advection_scheme, vorticity_confinement, gt["relaxation_factor"],
-            gt["residual_threshold"], total_runtime, no_dye, cpu, visualization,
-            numeric_tolerance
+            gt["relaxation_factor"], gt["residual_threshold"], total_runtime,
+            numeric_tolerance, other_params, other_params
         )
     elif problem == "epoch":
         # Map tolerance level to numerical value for epoch
