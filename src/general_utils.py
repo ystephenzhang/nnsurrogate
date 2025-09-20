@@ -816,7 +816,6 @@ class Verifier:
                    qid,
                    prev_cost=0
                    ):
-        #pdb.set_trace()
         success, error = check_gt(self.problem,
                            profile,
                            self.best_params[qid],

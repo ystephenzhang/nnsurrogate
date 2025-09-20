@@ -489,7 +489,7 @@ def evaluate(params,
             else:
                 cost= float(prediction[0, 1])     # Second output is cost
             
-            #pdb.set_trace()
+            pdb.set_trace()
             if cost <= 0:
                 if "n_space" in params:
                     n_space = int(params.get("n_space"))
