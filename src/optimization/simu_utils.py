@@ -477,7 +477,7 @@ def evaluate(params,
             with open(surrogate_config, 'r') as f:
                 cfg = yaml.safe_load(f)
             success_target = cfg["dataset"].get("success_target", "score")
-            preproc_cost = cfg["dataset"].get("preproc_cost", "score")
+            preproc_cost = cfg["dataset"].get("preproc_cost", False)
 
             if success_target == "score":
                 success = float(prediction[0, 0])  # First output is success probability 
@@ -489,7 +489,6 @@ def evaluate(params,
             else:
                 cost= float(prediction[0, 1])     # Second output is cost
             
-            pdb.set_trace()
             if cost <= 0:
                 if "n_space" in params:
                     n_space = int(params.get("n_space"))
@@ -548,8 +547,8 @@ def sample_sols_refined(
     task_info = {
         "n_space":{
             "range":{
-                "low": [64, 128],
-                "medium": [64, 512],
+                "low": [40, 128],
+                "medium": [40, 512],
                 "high": [64, 512]
             }
         },

@@ -7,6 +7,7 @@ import seaborn as sns
 import pandas as pd
 import json
 from collections import defaultdict
+from typing import Dict, List, Optional
 
 def main_exp_analysis(model_names,  task_types=['iterative', 'zero_shot'], figsize=(14, 8), legend_names=None):
     """
@@ -484,9 +485,9 @@ def create_zero_shot_scatter_plot():
     return df_zero_shot
 
 
-def create_method_scatter_plot(model_names, method_colors, base_model_shapes, legend_names=None, save_path=None):
+def create_method_scatter_plot(model_names, method_colors, base_model_shapes, legend_names=None, save_path=None, task_type='zero_shot'):
     """
-    Create a scatter plot showing zero-shot performance for specified models.
+    Create a scatter plot showing performance for specified models.
 
     Args:
         model_names: List of model names to include in the plot
@@ -494,6 +495,7 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
         base_model_shapes: Dict mapping base model type to marker shape for each model
         legend_names: Optional dict mapping model names to display names for legends
         save_path: Optional path to save the plot (default: '/home/ubuntu/dev/src/figures/method_scatter.pdf')
+        task_type: Either 'zero_shot' or 'iterative' to specify which task type to process
 
     Returns:
         DataFrame with mean metrics for each model
@@ -529,6 +531,7 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
             metrics = {}
             patterns = {
                 'success_rate': r'"success_rate":\s*"([0-9.]+)"',
+                'mean_efficiency': r'"mean_efficiency":\s*"([0-9.]+)"',
                 'hard_efficiency': r'"mean_hard_efficiency":\s*"([0-9.]+)"'
             }
 
@@ -538,6 +541,10 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
                     metrics[metric] = float(match.group(1))
                 else:
                     metrics[metric] = 0.0
+
+            # Use mean_efficiency if available, otherwise fall back to hard_efficiency
+            if metrics['mean_efficiency'] == 0.0 and metrics['hard_efficiency'] > 0.0:
+                metrics['mean_efficiency'] = metrics['hard_efficiency']
 
             return metrics
 
@@ -555,9 +562,9 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
             if not os.path.exists(task_dir):
                 continue
 
-            # Look for each specified model in zero-shot results
+            # Look for each specified model in the specified task type results
             for model_name in model_names:
-                log_file = os.path.join(task_dir, f"zero_shot_{model_name}.log")
+                log_file = os.path.join(task_dir, f"{task_type}_{model_name}.log")
 
                 if os.path.exists(log_file):
                     metrics = extract_summary_metrics(log_file)
@@ -579,18 +586,18 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
         # Calculate means across all data points
         total_points = len(metrics_list)
         mean_success_rate = sum(m['success_rate'] for m in metrics_list) / total_points
-        mean_hard_efficiency = sum(m['hard_efficiency'] for m in metrics_list) / total_points
+        mean_efficiency = sum(m['mean_efficiency'] for m in metrics_list) / total_points
 
-        # Scale down hard efficiency for G_xxx models and BO_default by factor of 4
+        # Scale down efficiency for G_xxx models and BO_default by factor of 4
         if model_name.startswith('G_'):
-            mean_hard_efficiency = mean_hard_efficiency / 12.0
+            mean_efficiency = mean_efficiency / 12.0
         elif model_name == 'BO_default':
-            mean_hard_efficiency = mean_hard_efficiency / 4.0
+            mean_efficiency = mean_efficiency / 4.0
 
         result = {
             'model_name': model_name,
             'success_rate': mean_success_rate,
-            'hard_efficiency': mean_hard_efficiency,
+            'mean_efficiency': mean_efficiency,
             'num_data_points': total_points
         }
         evaluation_data.append(result)
@@ -612,7 +619,7 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
         color = method_colors.get(model_name, 'gray')
         marker = base_model_shapes.get(model_name, 'o')
 
-        ax.scatter(row['hard_efficiency'],
+        ax.scatter(row['mean_efficiency'],
                   row['success_rate'],
                   c=color,
                   marker=marker,
@@ -635,11 +642,11 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
 
     # Set axis limits with some padding
     if len(df) > 0:
-        x_margin = (df['hard_efficiency'].max() - df['hard_efficiency'].min()) * 0.1
+        x_margin = (df['mean_efficiency'].max() - df['mean_efficiency'].min()) * 0.1
         y_margin = 0.05
 
-        ax.set_xlim(max(0, df['hard_efficiency'].min() - x_margin),
-                   df['hard_efficiency'].max() + x_margin)
+        ax.set_xlim(max(0, df['mean_efficiency'].min() - x_margin),
+                   df['mean_efficiency'].max() + x_margin)
         ax.set_ylim(-y_margin, 1 + y_margin)
 
     # Create legend
@@ -661,11 +668,468 @@ def create_method_scatter_plot(model_names, method_colors, base_model_shapes, le
     for _, row in df.iterrows():
         print(f"{row['model_name']}:")
         print(f"  Success Rate: {row['success_rate']:.3f}")
-        print(f"  Hard Efficiency: {row['hard_efficiency']:.3f}")
+        print(f"  Mean Efficiency: {row['mean_efficiency']:.3f}")
         print(f"  Data Points: {row['num_data_points']}/9")
         print()
 
     return df
+
+
+def create_combined_scatter_plot(model_names, method_colors, base_model_shapes, legend_names=None, save_path=None):
+    """
+    Create side-by-side scatter plots showing zero-shot and iterative performance with shared legend.
+
+    Args:
+        model_names: List of model names to include in the plot
+        method_colors: Dict mapping method type to color for each model
+        base_model_shapes: Dict mapping base model type to marker shape for each model
+        legend_names: Optional dict mapping model names to display names for legends
+        save_path: Optional path to save the plot (default: '/home/ubuntu/dev/src/figures/combined_scatter.pdf')
+
+    Returns:
+        Tuple of (df_zero_shot, df_iterative): DataFrames with mean metrics for each model
+    """
+
+    # Set up display names for legends
+    if legend_names is None:
+        legend_names = {name: name for name in model_names}
+
+    # Define the tasks and precision levels
+    tasks = [
+        ('heat_1d', 'n_space'),
+        ('euler_1d', 'n_space'),
+        ('ns_transient_2d', 'resolution')
+    ]
+    precision_levels = ['low', 'medium', 'high']
+    base_path = '/home/ubuntu/dev/SimulCost-Bench/eval_results'
+
+    def extract_summary_metrics(log_file_path):
+        """Extract summary metrics from a log file"""
+        try:
+            with open(log_file_path, 'r') as f:
+                content = f.read()
+
+            # Find the evaluation summary section
+            summary_match = re.search(r'🧾 Evaluation Summary.*?\n\{(.*?)\}', content, re.DOTALL)
+            if not summary_match:
+                return None
+
+            summary_content = summary_match.group(1)
+
+            # Extract individual metrics using regex
+            metrics = {}
+            patterns = {
+                'success_rate': r'"success_rate":\s*"([0-9.]+)"',
+                'mean_efficiency': r'"mean_efficiency":\s*"([0-9.]+)"',
+                'hard_efficiency': r'"mean_hard_efficiency":\s*"([0-9.]+)"'
+            }
+
+            for metric, pattern in patterns.items():
+                match = re.search(pattern, summary_content)
+                if match:
+                    metrics[metric] = float(match.group(1))
+                else:
+                    metrics[metric] = 0.0
+
+            # Use mean_efficiency if available, otherwise fall back to hard_efficiency
+            if metrics['mean_efficiency'] == 0.0 and metrics['hard_efficiency'] > 0.0:
+                metrics['mean_efficiency'] = metrics['hard_efficiency']
+
+            return metrics
+
+        except Exception as e:
+            return None
+
+    def get_data_for_task_type(task_type, models_to_include):
+        """Get data for a specific task type"""
+        model_results = defaultdict(list)
+
+        # Extract data from all tasks and precision levels
+        for task_name, param_type in tasks:
+            for precision in precision_levels:
+                task_dir = f"{base_path}/{task_name}/{param_type}/{precision}"
+
+                if not os.path.exists(task_dir):
+                    continue
+
+                # Look for each specified model in the specified task type results
+                for model_name in models_to_include:
+                    log_file = os.path.join(task_dir, f"{task_type}_{model_name}.log")
+
+                    if os.path.exists(log_file):
+                        metrics = extract_summary_metrics(log_file)
+
+                        if metrics:
+                            metrics['task'] = f"{task_name}_{param_type}"
+                            metrics['precision'] = precision
+                            model_results[model_name].append(metrics)
+
+        # Compute mean metrics across all tasks and precision levels for each model
+        evaluation_data = []
+        for model_name in models_to_include:
+            metrics_list = model_results[model_name]
+
+            if not metrics_list:
+                print(f"Warning: No data found for model {model_name} in {task_type}")
+                continue
+
+            # Calculate means across all data points
+            total_points = len(metrics_list)
+            mean_success_rate = sum(m['success_rate'] for m in metrics_list) / total_points
+            mean_efficiency = sum(m['mean_efficiency'] for m in metrics_list) / total_points
+
+            # Scale down efficiency for G_xxx models and BO_default by factor of 4
+            if model_name.startswith('G_'):
+                mean_efficiency = mean_efficiency / 12.0
+            elif model_name == 'BO_default':
+                mean_efficiency = mean_efficiency / 4.0
+
+            result = {
+                'model_name': model_name,
+                'success_rate': mean_success_rate,
+                'mean_efficiency': mean_efficiency,
+                'num_data_points': total_points
+            }
+            evaluation_data.append(result)
+
+        return pd.DataFrame(evaluation_data)
+
+    # Get data for both task types
+    zero_shot_models = [model for model in model_names if not model.startswith('G_')]
+    df_zero_shot = get_data_for_task_type('zero_shot', zero_shot_models)
+    df_iterative = get_data_for_task_type('iterative', model_names)
+
+    # Create the combined plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+
+    # Plot zero-shot data
+    legend_handles = []
+    legend_labels = []
+
+    for _, row in df_zero_shot.iterrows():
+        model_name = row['model_name']
+        display_name = legend_names.get(model_name, model_name)
+        color = method_colors.get(model_name, 'gray')
+        marker = base_model_shapes.get(model_name, 'o')
+
+        handle = ax1.scatter(row['mean_efficiency'],
+                  row['success_rate'],
+                  c=color,
+                  marker=marker,
+                  s=150,
+                  alpha=0.8,
+                  edgecolors='black',
+                  linewidth=1.2,
+                  label=display_name)
+
+        # Collect handles and labels for shared legend
+        if display_name not in legend_labels:
+            legend_handles.append(handle)
+            legend_labels.append(display_name)
+
+    # Plot iterative data
+    for _, row in df_iterative.iterrows():
+        model_name = row['model_name']
+        display_name = legend_names.get(model_name, model_name)
+        color = method_colors.get(model_name, 'gray')
+        marker = base_model_shapes.get(model_name, 'o')
+
+        handle = ax2.scatter(row['mean_efficiency'],
+                  row['success_rate'],
+                  c=color,
+                  marker=marker,
+                  s=150,
+                  alpha=0.8,
+                  edgecolors='black',
+                  linewidth=1.2,
+                  label=display_name)
+
+        # Collect handles and labels for shared legend (avoid duplicates)
+        if display_name not in legend_labels:
+            legend_handles.append(handle)
+            legend_labels.append(display_name)
+
+    # Customize both subplots
+    for i, (ax, df, title) in enumerate([(ax1, df_zero_shot, 'Zero-Shot'), (ax2, df_iterative, 'Sequential')]):
+        ax.set_xlabel('Efficiency', fontsize=26)
+
+        # Only set y-axis label and ticks for the left subplot
+        if i == 0:
+            ax.set_ylabel('Success Rate', fontsize=26)
+            ax.tick_params(axis='y', which='major', labelsize=24)
+        else:
+            ax.tick_params(axis='y', which='major', labelsize=24, labelleft=False)
+
+        ax.set_title(title, fontsize=28, fontweight='bold')
+
+        # Add grid for better readability
+        ax.grid(True, alpha=0.3, linestyle='--')
+
+        # Increase tick label font sizes for x-axis
+        ax.tick_params(axis='x', which='major', labelsize=24)
+
+        # Set axis limits with some padding
+        if len(df) > 0:
+            x_margin = (df['mean_efficiency'].max() - df['mean_efficiency'].min()) * 0.1
+            y_margin = 0.05
+
+            ax.set_xlim(max(0, df['mean_efficiency'].min() - x_margin),
+                       df['mean_efficiency'].max() + x_margin)
+            ax.set_ylim(-y_margin, 1 + y_margin)
+
+    plt.tight_layout()
+    plt.subplots_adjust(right=0.75)  # Make room for legend on the right
+
+    # Create shared legend positioned on the right in the blank space
+    fig.legend(legend_handles, legend_labels,
+              loc='center left', bbox_to_anchor=(0.76, 0.5),
+              ncol=1, fontsize=22)
+
+    # Save the plot
+    if save_path is None:
+        save_path = '/home/ubuntu/dev/src/figures/combined_scatter.pdf'
+    plt.savefig(save_path, dpi=300, bbox_inches='tight', format="pdf")
+
+    # Display the plot
+    plt.show()
+
+    # Print summary
+    print(f"\nZero-Shot Model Performance Summary:")
+    print("="*60)
+    for _, row in df_zero_shot.iterrows():
+        print(f"{row['model_name']}:")
+        print(f"  Success Rate: {row['success_rate']:.3f}")
+        print(f"  Mean Efficiency: {row['mean_efficiency']:.3f}")
+        print(f"  Data Points: {row['num_data_points']}/9")
+        print()
+
+    print(f"\nIterative Model Performance Summary:")
+    print("="*60)
+    for _, row in df_iterative.iterrows():
+        print(f"{row['model_name']}:")
+        print(f"  Success Rate: {row['success_rate']:.3f}")
+        print(f"  Mean Efficiency: {row['mean_efficiency']:.3f}")
+        print(f"  Data Points: {row['num_data_points']}/9")
+        print()
+
+    return df_zero_shot, df_iterative
+
+
+def create_multi_task_bar_visualization(
+    model_entries: Dict[str, List[str]],
+    task_files: Dict[str, str],
+    metric: str = 'mean_hard_efficiency',
+    figsize: tuple = (16, 12),
+    save_path: Optional[str] = None,
+    x_axis_labels: Optional[Dict[str, List[str]]] = None,
+    include_iterative: bool = True
+):
+    """
+    Create a grid of tiny bar plots comparing different methods across tasks and base models.
+
+    Args:
+        model_entries: Dict mapping "model legend name" to list of entry names to compare
+                      e.g. {"o4-mini": ["ab_openai_init_refined", "o4-mini", "G_openai"]}
+        task_files: Dict mapping "task name for legend" to CSV file names
+                   e.g. {"Heat 1D": "heat_1d_n_space_zero_shot.csv"}
+        metric: Column name to visualize (default: 'mean_hard_efficiency')
+        figsize: Figure size tuple
+        save_path: Optional path to save the plot
+        x_axis_labels: Optional dict mapping model names to list of custom x-axis labels
+                      e.g. {"o4-mini": ["Ours", "Direct", "OPRO"]}
+        include_iterative: Whether to include iterative results alongside zero-shot
+
+    Returns:
+        fig, axes: Matplotlib figure and axes objects
+    """
+
+    base_path = '/home/ubuntu/dev/SimulCost-Bench/eval_results/summary'
+
+    # Get dimensions for subplot grid
+    n_tasks = len(task_files)
+    n_models = len(model_entries)
+
+    # If including iterative, we need twice as many columns (zero-shot + iterative per task)
+    n_cols = n_tasks * 2 if include_iterative else n_tasks
+
+    # Create subplot grid: tasks as columns, models as rows
+    fig, axes = plt.subplots(n_models, n_cols, figsize=figsize,
+                            gridspec_kw={'hspace': 0.3, 'wspace': 0.2})
+
+    # Handle case where there's only one row or column
+    if n_models == 1 and n_cols == 1:
+        axes = [[axes]]
+    elif n_models == 1:
+        axes = [axes]
+    elif n_cols == 1:
+        axes = [[ax] for ax in axes]
+
+    # Color scheme: first entry (ours) gets color, rest are gray
+    ours_color = '#1f77b4'  # Blue for "ours"
+    other_color = '#808080'  # Gray for others
+
+    # Process each task
+    task_names = list(task_files.keys())
+    for task_idx, (task_name, csv_file_base) in enumerate(task_files.items()):
+
+        # Define task types to process
+        task_types = ['zero_shot']
+        if include_iterative:
+            task_types.append('iterative')
+
+        for type_idx, task_type in enumerate(task_types):
+            # Construct CSV file name based on task type
+            csv_file = csv_file_base.replace('zero_shot', task_type)
+            csv_path = os.path.join(base_path, csv_file)
+
+            # Load CSV data
+            try:
+                df = pd.read_csv(csv_path, index_col=0)
+            except FileNotFoundError:
+                print(f"Warning: CSV file not found: {csv_path}")
+                continue
+            except Exception as e:
+                print(f"Error reading {csv_path}: {e}")
+                continue
+
+            # Calculate column index (task_idx * 2 + type_idx for dual columns per task)
+            col_idx = task_idx * 2 + type_idx if include_iterative else task_idx
+
+            # Process each model (row)
+            model_names = list(model_entries.keys())
+            for model_idx, (model_name, entry_list) in enumerate(model_entries.items()):
+                ax = axes[model_idx][col_idx]
+
+                # Extract data for this model's entries
+                values = []
+                labels = []
+                entry_colors = []
+
+                # Filter entries based on task type
+                filtered_entries = []
+                filtered_labels = []
+                filtered_colors = []
+
+                for entry_idx, entry_name in enumerate(entry_list):
+                    # Skip OPRO (G_xxx) entries in zero-shot plots
+                    if task_type == 'zero_shot' and entry_name.startswith('G_'):
+                        continue
+
+                    filtered_entries.append(entry_name)
+
+                    # Use custom x-axis labels if provided, otherwise use entry names
+                    if x_axis_labels and model_name in x_axis_labels and entry_idx < len(x_axis_labels[model_name]):
+                        filtered_labels.append(x_axis_labels[model_name][entry_idx])
+                    else:
+                        filtered_labels.append(entry_name)
+
+                    # Color: first entry gets ours_color, rest get other_color
+                    if entry_idx == 0:
+                        filtered_colors.append(ours_color)
+                    else:
+                        filtered_colors.append(other_color)
+
+                # Extract values for filtered entries
+                for entry_name in filtered_entries:
+                    if entry_name in df.index:
+                        value = df.loc[entry_name, metric]
+                        if pd.notna(value) and value != '':
+                            raw_value = float(value)
+
+                            # Apply OPRO scaling for iterative tasks
+                            if task_type == 'iterative' and entry_name.startswith('G_'):
+                                raw_value = raw_value / 4.0
+
+                            values.append(raw_value)
+                        else:
+                            values.append(0)
+                    else:
+                        print(f"Warning: Entry '{entry_name}' not found in {csv_file}")
+                        values.append(0)
+
+                labels = filtered_labels
+                entry_colors = filtered_colors
+
+                # Create bar plot
+                if values:
+                    x_pos = np.arange(len(values))
+                    bars = ax.bar(x_pos, values, color=entry_colors, alpha=0.8,
+                                 edgecolor='black', linewidth=0.5)
+
+                    # Set x-axis labels only for bottom row
+                    ax.set_xticks(x_pos)
+                    if model_idx == n_models - 1:  # Bottom row only
+                        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=14)
+                    else:
+                        ax.set_xticklabels([])
+
+                    # Add value labels on top of bars
+                    for bar, value in zip(bars, values):
+                        if value > 0:
+                            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(values)*0.01,
+                                   f'{value:.2f}', ha='center', va='bottom', fontsize=11)
+
+                # Set y-axis label only for leftmost column
+                if col_idx == 0:
+                    ax.set_ylabel(f'{model_name}',
+                                 fontsize=18, fontweight='bold')
+
+                # Set column title only for top row
+                if model_idx == 0:
+                    if include_iterative:
+                        # For iterative mode, show method type above each column
+                        method_title = task_type.replace("_", "-").replace("zero-shot", "Zero-Shot").replace("iterative", "Sequential")
+                        ax.set_title(method_title, fontsize=18, fontweight='bold')
+                    else:
+                        # For single column mode, show task name
+                        ax.set_title(task_name, fontsize=18, fontweight='bold')
+
+                # Set y-axis limits based on data
+                if values and max(values) > 0:
+                    ax.set_ylim(0, max(values) * 1.1)
+                else:
+                    ax.set_ylim(0, 1)
+
+                # Add grid
+                ax.grid(True, alpha=0.3, axis='y')
+
+                # Adjust tick parameters - only show y-axis labels on leftmost column
+                if col_idx == 0:
+                    ax.tick_params(axis='y', which='major', labelsize=12)
+                else:
+                    ax.tick_params(axis='y', which='major', labelsize=12, labelleft=False)
+                ax.tick_params(axis='x', which='major', labelsize=12)
+
+    # Add task name labels in the middle of each task's columns (only for iterative mode)
+    if include_iterative:
+        for task_idx, task_name in enumerate(task_names):
+            # Calculate the middle position between the two columns for this task
+            left_col = task_idx * 2
+            right_col = task_idx * 2 + 1
+
+            # Get the x-position of the middle between the two subplots
+            left_ax = axes[0][left_col]
+            right_ax = axes[0][right_col]
+
+            # Calculate middle position in figure coordinates
+            left_pos = left_ax.get_position().x0
+            right_pos = right_ax.get_position().x1
+            middle_x = (left_pos + right_pos) / 2
+
+            # Add task name above the top row, spanning both columns
+            fig.text(middle_x, 0.95, task_name,
+                    ha='center', va='center', fontsize=20, fontweight='bold',
+                    transform=fig.transFigure)
+
+    # No overall title per request
+    plt.tight_layout()
+
+    # Save if path provided
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight', format='pdf')
+        print(f"Plot saved to: {save_path}")
+
+    return fig, axes
 
 
 if __name__ == "__main__":
@@ -674,9 +1138,9 @@ if __name__ == "__main__":
     legend_names = {
         'ab_openai_init_refined': "Ours w/ o4-mini",
         "o4-mini": "Direct Prompting w/ o4-mini",
-        'O_Qwen_relaxed_t05': "CAED-Agent w/ Qwen3-8B(urs)",
+        'O_Qwen_relaxed_final': "CAED-Agent w/ Qwen3-8B(ours)",
         "qwen3_8b": "Direct Prompting w/ Qwen3-8B",
-        'O_Llama_relaxed_t05': "CAED-Agent w/ Llama3.2-3B-Instruct (ours)",
+        'O_Llama_relaxed_final': "CAED-Agent w/ Llama3.2-3B-Instruct (ours)",
         "llama3.2_3b_base": "Direct Prompting w/ Llama3.2-3B-Instruct",
         "BO_default": "Bayesian Optimization",
         'G_openai': "OPRO w/ o4-mini",
@@ -691,8 +1155,8 @@ if __name__ == "__main__":
     # Select representative models from different categories
     selected_models = [
         'ab_openai_init_refined',    # CAED Agent
-        'O_Qwen_relaxed_t05',        # Oracle method
-        'O_Llama_relaxed_t05',        # Oracle method (different base)
+        'O_Qwen_relaxed_final',        # Oracle method
+        'O_Llama_relaxed_final',        # Oracle method (different base)
         'o4-mini',                   # Base LLM
         'qwen3_8b',                  # Base LLM (different model)
         'llama3.2_3b_base',          # Base LLM (different model)
@@ -709,8 +1173,8 @@ if __name__ == "__main__":
         'qwen3_8b': '#DC143C',                   # Crimson - Direct Prompting
         'llama3.2_3b_base': '#DC143C',           # Crimson - Direct Prompting
         'BO_default': '#32CD32',                 # Lime Green - Bayesian Optimization
-        'O_Qwen_relaxed_t05': '#2E8B57',         # Sea Green - CAED Agent
-        'O_Llama_relaxed_t05': '#2E8B57',        # Sea Green - CAED Agent
+        'O_Qwen_relaxed_final': '#2E8B57',         # Sea Green - CAED Agent
+        'O_Llama_relaxed_final': '#2E8B57',        # Sea Green - CAED Agent
         'G_openai': '#FF8C00',                   # Dark Orange - G method
         'G_Qwen': '#FF8C00',                     # Dark Orange - G method
         'G_Llama': '#FF8C00'                     # Dark Orange - G method
@@ -723,27 +1187,49 @@ if __name__ == "__main__":
         'qwen3_8b': 's',                         # Square - Qwen base
         'llama3.2_3b_base': '^',                 # Triangle up - Llama base
         'BO_default': 'D',                       # Diamond - BO (special method)
-        'O_Qwen_relaxed_t05': 's',               # Square - Qwen base
-        'O_Llama_relaxed_t05': '^',              # Triangle up - Llama base
+        'O_Qwen_relaxed_final': 's',               # Square - Qwen base
+        'O_Llama_relaxed_final': '^',              # Triangle up - Llama base
         'G_openai': 'o',                         # Circle - OpenAI base
         'G_Qwen': 's',                           # Square - Qwen base
         'G_Llama': '^'                           # Triangle up - Llama base
     }
 
-    # Create the scatter plot
-    #df_methods = create_method_scatter_plot(
-    #    model_names=selected_models,
-    #    method_colors=method_colors,
-    #    base_model_shapes=base_model_shapes,
-    #    legend_names=legend_names,
-    #    save_path='/home/ubuntu/dev/src/figures/method_comparison_scatter.pdf'
-    #)
+    # Create zero-shot scatter plot (excluding G_xxx models)
+    zero_shot_models = [model for model in selected_models if not model.startswith('G_')]
+    '''df_zero_shot = create_method_scatter_plot(
+        model_names=zero_shot_models,
+        method_colors=method_colors,
+        base_model_shapes=base_model_shapes,
+        legend_names=legend_names,
+        save_path='/home/ubuntu/dev/src/figures/scatterplot_zero_shot.pdf',
+        task_type='zero_shot'
+    )
+
+    # Create iterative scatter plot (including G_xxx models)
+    df_iterative = create_method_scatter_plot(
+        model_names=selected_models,
+        method_colors=method_colors,
+        base_model_shapes=base_model_shapes,
+        legend_names=legend_names,
+        save_path='/home/ubuntu/dev/src/figures/scatterplot_iterative.pdf',
+        task_type='iterative'
+    )'''
+
+    # Create combined side-by-side scatter plot with shared legend
+    print("\nCreating combined scatter plot...")
+    df_zero_shot_combined, df_iterative_combined = create_combined_scatter_plot(
+        model_names=selected_models,
+        method_colors=method_colors,
+        base_model_shapes=base_model_shapes,
+        legend_names=legend_names,
+        save_path='/home/ubuntu/dev/src/figures/combined_scatter.pdf'
+    )
 
     # Create the zero-shot scatter plot
     print("\nCreating zero-shot scatter plot...")
     #df_zero_shot = create_zero_shot_scatter_plot()
     
-    from src.figures.ablation import plot_optimization_with_variance
+    #from src.figures.ablation import plot_optimization_with_variance
 
     # Multiple folders comparison
     folder_paths = [
@@ -752,14 +1238,14 @@ if __name__ == "__main__":
         "/home/ubuntu/dev/outputs/optimization-results/openai_hard"
     ]
 
-    plot_optimization_with_variance(
+    '''plot_optimization_with_variance(
         folder_paths,
         labels=["o4-mini w/ Surrogate Signal (Ours)", "o4-mini w/ Random Signal", "o4-mini w/ Sparse Signal"],
         base_values=[0.096, 1.144],
         base_labels=["o4-mini Direct Prompting", "o4-mini w/ Fixed Illustrations"],
         success_threshold=1.0,
         name="./src/figures/ab-surrogate-mean.pdf"
-    )
+    )'''
 
     model_ab_paths = [
         "/home/ubuntu/dev/outputs/optimization-results/openai_surrogate_zero-shot",
@@ -767,11 +1253,42 @@ if __name__ == "__main__":
         #"/home/ubuntu/dev/outputs/optimization-results/openai_hard"
     ]
 
-    plot_optimization_with_variance(
+    '''plot_optimization_with_variance(
         model_ab_paths,
         labels=["o4-mini w/ Scenario Setting (Ours)", "o4-mini w/o Scenario Setting"],
         base_values=[0.096],
         base_labels=["o4-mini Direct Prompting w/ Scenario Setting"],
         success_threshold=1.0,
         name="./src/figures/ab-model-mean.pdf"
+    )'''
+
+    print("\nCreating bar plot...")
+    
+    model_entries_example1 = {
+        "o4-mini Methods": ["ab_openai_init_refined", "o4-mini", "G_openai"],
+        "Qwen Methods": ["O_Qwen_relaxed_final", "qwen3_8b", "G_Qwen"],
+        "Llama Methods": ["O_Llama_relaxed_final", "llama3.2_3b_base", "G_Llama"]
+    }
+
+    task_files_example1 = {
+        "Heat 1D": "heat_1d_n_space_zero_shot.csv",
+        "Euler 1D": "euler_1d_n_space_zero_shot.csv",
+        "NS 2D": "ns_transient_2d_resolution_zero_shot.csv"
+    }
+    
+    x_axis_labels_example1 = {
+        "o4-mini Methods": ["Ours", "Base LLM", "OPRO"],
+        "Qwen Methods": ["Ours", "Base LLM", "OPRO"],
+        "Llama Methods": ["Ours", "Base LLM", "OPRO"]
+    }
+    
+    '''fig1, axes1 = create_multi_task_bar_visualization(
+        model_entries=model_entries_example1,
+        task_files=task_files_example1,
+        metric='mean_efficiency',
+        figsize=(15, 10),
+        save_path='/home/ubuntu/dev/src/figures/barplot.pdf',
+        x_axis_labels=x_axis_labels_example1,
+        include_iterative=True
     )
+'''

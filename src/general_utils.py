@@ -106,7 +106,7 @@ INFO = {
     "n_space":{
         "description":"n_space, the number of spatial segments to solve a given PDE problem.",
         "hints":"Your goal is to select a value that is likely to converge, while also keeping the cost from becoming too high.\nPlease strike a balance between being too conservative and too aggressive:\n- If n_space is too small, the process may fail to converge.\n- If it's too large, the cost may increase dramatically.", 
-        "range": [64, 2048],
+        "range": [40, 2048],
         "initial": 100,
         "type": "int",
         "search": "grid",
